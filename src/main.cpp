@@ -7,6 +7,8 @@
     touch    -> poke / pet / swipe-down menu
     IMU      -> shake, free-fall, auto-rotate so he is always face up
     flash    -> remembers eye color + orientation
+    wifi     -> SoftAP hotspot + station mode + simple config page
+    base44   -> polls a Base44 app endpoint for remote commands
 
   Serial (115200):  d demo all animations   n next animation   c next color
                     o rotate 'up' 90 deg    m mirror rotation  s sleep/wake   f fps on/off
@@ -15,6 +17,10 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
 #include "SensorQMI8658.hpp"
@@ -34,6 +40,8 @@
 #define TP_RESET  40
 
 static const uint8_t BRIGHTNESS = 190;  // AMOLED: lower = longer life for the pixels
+static const char* AP_SSID = "Charlie-Eyes";
+static const char* AP_PASS = "charlie123";  // change if you want
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *panel = new Arduino_CO5300(bus, LCD_RST, 0, ch::SCR_W, ch::SCR_H, 6, 0, 0, 0);
@@ -41,6 +49,7 @@ Arduino_CO5300 *panel = new Arduino_CO5300(bus, LCD_RST, 0, ch::SCR_W, ch::SCR_H
 TouchDrvCST92xx touch;
 SensorQMI8658 qmi;
 Preferences prefs;
+WebServer server(80);
 
 static uint16_t *fb = nullptr;
 static bool haveTouch = false, haveImu = false;
@@ -49,10 +58,14 @@ static bool touchDown = false;
 static int16_t tX[2], tY[2];
 static uint32_t lastTouchSeen = 0;
 static float lastAx = 0, lastAy = 0, lastAz = 1;
-static uint32_t lastFrame = 0, lastSave = 0, fpsT = 0;
+static uint32_t lastFrame = 0, lastSave = 0, fpsT = 0, lastPoll = 0;
 static int fpsCount = 0;
 static bool showFps = false;
 static int lastRows = 0;
+
+// WiFi / Base44 config (saved in Preferences)
+String wifiSsid, wifiPass, base44Url, base44Token;
+bool wifiConnected = false;
 
 static void IRAM_ATTR onTouchIrq() { touchIrq = true; }
 
@@ -61,6 +74,10 @@ static void loadSettings() {
   ch::settings.colorIdx = prefs.getUChar("col", 0) & 7;
   ch::settings.orientOffset = prefs.getShort("ori", 0);
   ch::settings.mirror = prefs.getBool("mir", false);
+  wifiSsid = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  base44Url = prefs.getString("b44url", "");
+  base44Token = prefs.getString("b44tok", "");
   prefs.end();
 }
 
@@ -69,9 +86,116 @@ static void saveSettings() {
   prefs.putUChar("col", ch::settings.colorIdx);
   prefs.putShort("ori", ch::settings.orientOffset);
   prefs.putBool("mir", ch::settings.mirror);
+  prefs.putString("ssid", wifiSsid);
+  prefs.putString("pass", wifiPass);
+  prefs.putString("b44url", base44Url);
+  prefs.putString("b44tok", base44Token);
   prefs.end();
   ch::settings.dirty = false;
   Serial.println("settings saved");
+}
+
+// ---------- Config web page ----------
+const char* configPage = R"rawliteral(
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Charlie Config</title>
+<style>body{font-family:sans-serif;max-width:420px;margin:20px auto;padding:10px}input,button{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}button{background:#08c;color:#fff;border:0;border-radius:6px}</style>
+</head><body>
+<h2>Charlie Eyes Config</h2>
+<form action="/save" method="POST">
+<label>Home WiFi SSID<br><input name="ssid" value="%SSID%"></label>
+<label>Password<br><input name="pass" type="password" value="%PASS%"></label>
+<label>Base44 API URL<br><input name="b44url" value="%B44URL%" placeholder="https://app.base44.com/api/apps/APPID/entities/Commands"></label>
+<label>Base44 Token<br><input name="b44tok" value="%B44TOK%"></label>
+<button type="submit">Save & Reboot</button>
+</form>
+<p>Hotspot: Charlie-Eyes / charlie123<br>Once saved, Charlie will join your WiFi and poll Base44.</p>
+</body></html>
+)rawliteral";
+
+void handleRoot() {
+  String page = configPage;
+  page.replace("%SSID%", wifiSsid);
+  page.replace("%PASS%", wifiPass);
+  page.replace("%B44URL%", base44Url);
+  page.replace("%B44TOK%", base44Token);
+  server.send(200, "text/html", page);
+}
+
+void handleSave() {
+  wifiSsid = server.arg("ssid");
+  wifiPass = server.arg("pass");
+  base44Url = server.arg("b44url");
+  base44Token = server.arg("b44tok");
+  saveSettings();
+  server.send(200, "text/html", "<h2>Saved! Rebooting...</h2>");
+  delay(500);
+  ESP.restart();
+}
+
+void setupWiFi() {
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(AP_SSID, AP_PASS);
+  Serial.printf("Hotspot: %s  IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
+
+  server.on("/", handleRoot);
+  server.on("/save", HTTP_POST, handleSave);
+  server.begin();
+  Serial.println("Config page: http://192.168.4.1");
+
+  if (wifiSsid.length() > 0) {
+    Serial.printf("Connecting to %s ...\n", wifiSsid.c_str());
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  }
+}
+
+void handleWiFi() {
+  server.handleClient();
+  if (wifiSsid.length() > 0 && WiFi.status() == WL_CONNECTED && !wifiConnected) {
+    wifiConnected = true;
+    Serial.printf("WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+  } else if (WiFi.status() != WL_CONNECTED) {
+    wifiConnected = false;
+  }
+}
+
+void pollBase44() {
+  if (!wifiConnected || base44Url.length() == 0 || base44Token.length() == 0) return;
+  uint32_t now = millis();
+  if (now - lastPoll < 5000) return;  // every 5 s
+  lastPoll = now;
+
+  HTTPClient http;
+  http.begin(base44Url);
+  http.addHeader("Authorization", "Bearer " + base44Token);
+  int code = http.GET();
+  if (code == 200) {
+    String payload = http.getString();
+    JsonDocument doc;
+    if (deserializeJson(doc, payload) == DeserializationError::Ok) {
+      const char* anim = doc["anim"] | doc[0]["anim"] | nullptr;  // support single object or array
+      int color = doc["color"] | doc[0]["color"] | -1;
+      if (anim) {
+        // Map common names to anim ids (extend as needed)
+        String a = String(anim);
+        a.toLowerCase();
+        if (a == "love" || a == "heart") ch::forceAnim(ch::AN_LOVE);
+        else if (a == "angry") ch::forceAnim(ch::AN_ANGRY);
+        else if (a == "wink" || a == "wink_l") ch::forceAnim(ch::AN_WINK_L);
+        else if (a == "wink_r") ch::forceAnim(ch::AN_WINK_R);
+        else if (a == "sleep") ch::toggleSleep();
+        else if (a == "wake") { if (ch::sleeping) ch::toggleSleep(); }
+        else Serial.printf("unknown anim: %s\n", anim);
+      }
+      if (color >= 0 && color < 8) {
+        ch::settings.colorIdx = color;
+        ch::settings.dirty = true;
+      }
+    }
+  } else {
+    Serial.printf("Base44 poll failed: %d\n", code);
+  }
+  http.end();
 }
 
 static void setupTouch() {
@@ -157,6 +281,7 @@ void setup() {
   loadSettings();
   setupTouch();
   setupImu();
+  setupWiFi();
 
   ch::init(fb, esp_random());
   ch::start(millis());
@@ -180,6 +305,8 @@ void loop() {
   lastFrame = now;
 
   handleSerial();
+  handleWiFi();
+  pollBase44();
 
   ch::Input in;
   readInputs(now, in);
