@@ -28,27 +28,22 @@ Open the menu, then press and hold the middle for about 1.2 seconds. Each hold t
 `d` demo every animation, `n` next animation, `c` next color, `o` rotate up, `m` mirror rotation,
 `s` sleep/wake, `f` show frame rate.
 
-## WiFi + Hotspot + Base44 (wifi-base44 branch)
+## WiFi + Hotspot + Base44
 On boot Charlie always starts a SoftAP hotspot:
 - SSID: `Charlie-Eyes`
 - Password: `charlie123`
 - Config page: http://192.168.4.1
 
-Connect to the hotspot from your phone, open the page, and set:
-- Your home WiFi SSID + password
-- Base44 API URL (example: the entities endpoint for a Commands table, or a backend function URL)
-- Base44 personal access token
+Connect to the hotspot, open the page, and set home WiFi + Base44 URL/token if you want cloud control.
 
-After saving he reboots, joins your WiFi, and every 5 seconds polls the Base44 URL.  
-Expected JSON (single object or first element of an array):
-```json
-{ "anim": "love", "color": 2 }
-```
-Supported `anim` values so far: `love`/`heart`, `angry`, `wink`/`wink_l`, `wink_r`, `sleep`, `wake`.  
-`color` is 0-7 matching the built-in presets.  
-Add more mappings in `pollBase44()` as needed.
+## Chrome Web Bluetooth (recommended)
+Charlie advertises as **Charlie-Eyes** over BLE.
 
-The hotspot stays up even after joining WiFi (AP+STA mode) so you can always reconfigure.
+1. Flash the latest firmware from the `wifi-base44` branch.
+2. Open `charlie-ble.html` in **Chrome** (desktop or Android).
+3. Click **Connect to Charlie-Eyes**, pick him in the device list, and use the buttons.
+
+Commands: love, angry, wink, wink_r, sleep, wake, or `color:0` through `color:7`.
 
 ## Development
 `src/charlie_core.h` has no hardware code. `test/sim.cpp` runs it on a PC and dumps frames:
