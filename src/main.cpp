@@ -1,17 +1,11 @@
 /*
   Charlie - desktop companion
-  Waveshare ESP32-S3-Touch-AMOLED-1.75 (466x466 CO5300 QSPI AMOLED, CST9217 touch, QMI8658 IMU)
+  Waveshare ESP32-S3-Touch-AMOLED-1.75
 
-  All the personality lives in charlie_core.h (hardware free). This file only wires up:
-    display  -> software framebuffer in PSRAM, only the rows that changed get pushed
-    touch    -> poke / pet / swipe-down menu
-    IMU      -> shake, free-fall, auto-rotate so he is always face up
-    flash    -> remembers eye color + orientation
-
-  Serial (115200):  d demo all animations   n next animation   c next color
-                    o rotate 'up' 90 deg    m mirror rotation  s sleep/wake   f fps on/off
+  Swipe down  = color menu
+  Swipe up    = volume + brightness
+  Swipe right = alarms & timers
 */
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <Preferences.h>
@@ -20,7 +14,6 @@
 #include "SensorQMI8658.hpp"
 #include "charlie_core.h"
 
-// ---- Waveshare ESP32-S3-Touch-AMOLED-1.75 pins
 #define LCD_CS    12
 #define LCD_SCLK  38
 #define LCD_SDIO0 4
@@ -32,8 +25,6 @@
 #define IIC_SCL   14
 #define TP_INT    11
 #define TP_RESET  40
-
-static const uint8_t BRIGHTNESS = 190;  // AMOLED: lower = longer life for the pixels
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *panel = new Arduino_CO5300(bus, LCD_RST, 0, ch::SCR_W, ch::SCR_H, 6, 0, 0, 0);
@@ -53,14 +44,23 @@ static uint32_t lastFrame = 0, lastSave = 0, fpsT = 0;
 static int fpsCount = 0;
 static bool showFps = false;
 static int lastRows = 0;
+static uint8_t lastBright = 0;
 
 static void IRAM_ATTR onTouchIrq() { touchIrq = true; }
+
+// Soft sound stubs — replace with real I2S/ES8311 later
+static void soundHappy() { Serial.println("~ happy ~"); }
+static void soundPet() { Serial.println("~ soft pet ~"); }
+static void soundAlarm() { Serial.println("~ soft alarm ~"); }
+static void soundClick() { Serial.println("~ click ~"); }
 
 static void loadSettings() {
   prefs.begin("charlie", true);
   ch::settings.colorIdx = prefs.getUChar("col", 0) & 7;
   ch::settings.orientOffset = prefs.getShort("ori", 0);
   ch::settings.mirror = prefs.getBool("mir", false);
+  ch::volume = prefs.getFloat("vol", 0.6f);
+  ch::brightness = prefs.getUChar("bri", 190);
   prefs.end();
 }
 
@@ -69,6 +69,8 @@ static void saveSettings() {
   prefs.putUChar("col", ch::settings.colorIdx);
   prefs.putShort("ori", ch::settings.orientOffset);
   prefs.putBool("mir", ch::settings.mirror);
+  prefs.putFloat("vol", ch::volume);
+  prefs.putUChar("bri", ch::brightness);
   prefs.end();
   ch::settings.dirty = false;
   Serial.println("settings saved");
@@ -76,15 +78,13 @@ static void saveSettings() {
 
 static void setupTouch() {
   pinMode(TP_RESET, OUTPUT);
-  digitalWrite(TP_RESET, LOW);  delay(30);
+  digitalWrite(TP_RESET, LOW); delay(30);
   digitalWrite(TP_RESET, HIGH); delay(50);
   touch.setPins(TP_RESET, TP_INT);
   haveTouch = touch.begin(Wire, 0x5A, IIC_SDA, IIC_SCL);
   if (!haveTouch) { Serial.println("touch: NOT FOUND"); return; }
   Serial.printf("touch: %s\n", touch.getModelName());
-  // same sequence as Waveshare's working LVGL example
-  touch.sleep();
-  touch.reset();
+  touch.sleep(); touch.reset();
   touch.setMaxCoordinates(ch::SCR_W, ch::SCR_H);
   touch.setMirrorXY(true, true);
   pinMode(TP_INT, INPUT_PULLUP);
@@ -100,22 +100,13 @@ static void setupImu() {
 }
 
 static void readInputs(uint32_t now, ch::Input &in) {
-  // ---- touch: poll when the controller signalled, and keep polling while a finger is down
   if (haveTouch && (touchIrq || touchDown)) {
     touchIrq = false;
     uint8_t n = touch.getPoint(tX, tY, 1);
-    if (n > 0) {
-      touchDown = true;
-      lastTouchSeen = now;
-    } else if (touchDown && now - lastTouchSeen > 70) {
-      touchDown = false;
-    }
+    if (n > 0) { touchDown = true; lastTouchSeen = now; }
+    else if (touchDown && now - lastTouchSeen > 70) touchDown = false;
   }
-  in.touch = touchDown;
-  in.tx = tX[0];
-  in.ty = tY[0];
-
-  // ---- IMU (acceleration in g)
+  in.touch = touchDown; in.tx = tX[0]; in.ty = tY[0];
   in.imu = haveImu;
   if (haveImu && qmi.getDataReady()) {
     float x, y, z;
@@ -127,13 +118,14 @@ static void readInputs(uint32_t now, ch::Input &in) {
 static void handleSerial() {
   while (Serial.available()) {
     char c = Serial.read();
-    if (c == 'd') { ch::demoMode = !ch::demoMode; Serial.println(ch::demoMode ? "demo ON" : "demo OFF"); }
-    else if (c == 'n') { static int i = 1; ch::forceAnim(i); Serial.printf("anim: %s\n", ch::animName(i)); i = i % (ch::animCount() - 1) + 1; }
+    if (c == 'd') ch::demoMode = !ch::demoMode;
+    else if (c == 'n') { static int i = 1; ch::forceAnim(i); i = i % (ch::animCount() - 1) + 1; }
     else if (c == 'c') ch::nextColor();
     else if (c == 'o') ch::orientStep();
     else if (c == 'm') ch::mirrorToggle();
     else if (c == 's') ch::toggleSleep();
     else if (c == 'f') showFps = !showFps;
+    else if (c == 'a') ch::setAlarmIn(15000); // test 15s alarm
   }
 }
 
@@ -141,35 +133,29 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("Charlie waking up...");
-  Serial.printf("PSRAM: %u bytes\n", (unsigned)ESP.getPsramSize());
-
-  Wire.begin(IIC_SDA, IIC_SCL);
-  Wire.setClock(400000);
+  Wire.begin(IIC_SDA, IIC_SCL); Wire.setClock(400000);
 
   fb = (uint16_t *)ps_malloc((size_t)ch::SCR_W * ch::SCR_H * 2);
   if (!fb) fb = (uint16_t *)malloc((size_t)ch::SCR_W * ch::SCR_H * 2);
-  if (!fb) { Serial.println("framebuffer alloc FAILED"); while (true) delay(1000); }
+  if (!fb) { Serial.println("fb failed"); while (1) delay(1000); }
 
-  if (!panel->begin()) Serial.println("panel begin FAILED");
+  if (!panel->begin()) Serial.println("panel failed");
   panel->setBrightness(0);
   panel->fillScreen(RGB565_BLACK);
 
   loadSettings();
   setupTouch();
   setupImu();
-
   ch::init(fb, esp_random());
   ch::start(millis());
 
-  // first frame, then fade the backlight up so there is no flash of garbage
-  ch::Input in;
-  int y0, y1;
+  ch::Input in; int y0, y1;
   ch::update(millis(), 0.016f, in);
   ch::render(y0, y1);
   panel->draw16bitRGBBitmap(0, y0, fb + (size_t)y0 * ch::SCR_W, ch::SCR_W, y1 - y0 + 1);
-  for (int b = 0; b <= BRIGHTNESS; b += 10) { panel->setBrightness(b); delay(8); }
-  panel->setBrightness(BRIGHTNESS);
-
+  for (int b = 0; b <= ch::brightness; b += 10) { panel->setBrightness(b); delay(8); }
+  panel->setBrightness(ch::brightness);
+  lastBright = ch::brightness;
   lastFrame = millis();
   Serial.println("Hi, I'm Charlie!");
 }
@@ -180,24 +166,21 @@ void loop() {
   lastFrame = now;
 
   handleSerial();
-
   ch::Input in;
   readInputs(now, in);
   ch::update(now, dt, in);
 
+  if (ch::brightness != lastBright) {
+    panel->setBrightness(ch::brightness);
+    lastBright = ch::brightness;
+  }
+
   int y0, y1;
   ch::render(y0, y1);
-  lastRows = y1 - y0 + 1;
-  panel->draw16bitRGBBitmap(0, y0, fb + (size_t)y0 * ch::SCR_W, ch::SCR_W, lastRows);
+  panel->draw16bitRGBBitmap(0, y0, fb + (size_t)y0 * ch::SCR_W, ch::SCR_W, y1 - y0 + 1);
 
   if (ch::settings.dirty && now - lastSave > 1500) { lastSave = now; saveSettings(); }
 
-  if (showFps) {
-    fpsCount++;
-    if (now - fpsT >= 1000) { Serial.printf("fps %d  rows %d\n", fpsCount, lastRows); fpsCount = 0; fpsT = now; }
-  }
-
-  // ~60 fps cap
   uint32_t spent = millis() - now;
   if (spent < 14) delay(14 - spent);
 }
