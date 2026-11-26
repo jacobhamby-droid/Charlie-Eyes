@@ -1,0 +1,27 @@
+name: Build Charlie Eyes
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO & Build
+        run: |
+          pip install platformio
+          pio run
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: charlie-eyes-firmware
+          path: |
+            .pio/build/charlie-eyes/bootloader.bin
+            .pio/build/charlie-eyes/partitions.bin
+            .pio/build/charlie-eyes/firmware.bin
