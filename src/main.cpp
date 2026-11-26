@@ -1,9 +1,11 @@
 /*
- * Charlie - Smooth Alive Desktop Eyes
+ * Charlie - Alive Desktop Eyes
  * Board: Waveshare ESP32-S3-Touch-AMOLED-1.75 (466x466 CO5300)
  *
- * No menu. Soft fixed cyan eyes that actually look around.
- * Reactive to touch, petting, shake, pick-up. Mood system.
+ * Full-screen rendering (no band, no green bars, eyes never cut off).
+ * Soft cyan rounded-rect eyes with gentle shading.
+ * Lots of idle looking, breathing, double-blinks, reactions.
+ * Brightness control + soft alarm via serial.
  */
 
 #include <Arduino.h>
@@ -17,7 +19,7 @@
   #include <TouchDrvCST92xx.h>
 #endif
 
-#define MASTER_VOLUME 0.5f
+#define MASTER_VOLUME 0.48f
 #define PA_ACTIVE_LEVEL HIGH
 
 #define LCD_CS 12
@@ -44,44 +46,44 @@
 #define CENTER_X (SCREEN_W / 2)
 #define CENTER_Y (SCREEN_H / 2)
 
-// Band canvas for speed (only redraw the eye area)
-#define BAND_H 260
-#define BAND_Y ((SCREEN_H - BAND_H) / 2)
-
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *panel = new Arduino_CO5300(bus, LCD_RST, 0, SCREEN_W, SCREEN_H, 6, 0, 0, 0);
-Arduino_Canvas *gfx = new Arduino_Canvas(SCREEN_W, BAND_H, panel, 0, BAND_Y);
+Arduino_Canvas *gfx = new Arduino_Canvas(SCREEN_W, SCREEN_H, panel);
 
 const uint16_t BG = 0x0000;
-const uint16_t EYE = 0x05FF;      // softer cyan, easier on the eyes
-const uint16_t HIGHLIGHT = 0xBFFF;
+const uint16_t EYE = 0x05DF;          // soft cyan
+const uint16_t HIGHLIGHT = 0x6FFF;    // gentle lighter cyan, not white
+
+uint8_t brightness = 160;
+bool asleep = false;
 
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 Preferences prefs;
 
-// Fixed soft eye shape (Emo/Vector style rounded rect)
-const int BASE_W = 115;
-const int BASE_H = 130;
-const int BASE_R = 40;
-const int BASE_SP = 175;
+const int BASE_W = 118;
+const int BASE_H = 138;
+const int BASE_R = 42;
+const int BASE_SP = 178;
 
-// Sound (minimal)
-enum Snd : uint8_t { SND_NONE, SND_BOOT, SND_TAP, SND_HAPPY, SND_PURR, SND_SURPRISE, SND_ANGRY, SND_YAWN, SND_COUNT };
+// Sounds
+enum Snd : uint8_t { SND_NONE, SND_BOOT, SND_TAP, SND_HAPPY, SND_PURR, SND_SURPRISE, SND_ANGRY, SND_YAWN, SND_ALARM, SND_COUNT };
 struct Note { int16_t f0, f1; uint16_t ms; uint8_t vol; };
-static const Note N_BOOT[] = {{500,900,70,60},{900,1300,90,60}};
-static const Note N_TAP[] = {{700,1100,50,60}};
-static const Note N_HAPPY[] = {{800,1200,70,60},{1200,1500,90,60}};
-static const Note N_PURR[] = {{260,310,140,55},{310,260,140,55}};
-static const Note N_SURPRISE[] = {{450,1500,180,65}};
-static const Note N_ANGRY[] = {{160,130,180,70}};
-static const Note N_YAWN[] = {{550,280,380,40}};
+static const Note N_BOOT[] = {{480,880,80,55},{880,1250,100,55}};
+static const Note N_TAP[] = {{680,1050,55,55}};
+static const Note N_HAPPY[] = {{760,1150,75,55},{1150,1450,95,55}};
+static const Note N_PURR[] = {{240,290,160,50},{290,240,160,50}};
+static const Note N_SURPRISE[] = {{420,1400,200,60}};
+static const Note N_ANGRY[] = {{150,120,200,65}};
+static const Note N_YAWN[] = {{520,260,420,35}};
+static const Note N_ALARM[] = {{600,800,180,45},{800,1000,200,45},{1000,700,220,40}};
 
 struct SoundDef { const Note *notes; uint8_t n; };
 #define SD(a) {a, (uint8_t)(sizeof(a)/sizeof(a[0]))}
 static const SoundDef SOUNDS[SND_COUNT] = {
-  {nullptr,0}, SD(N_BOOT), SD(N_TAP), SD(N_HAPPY), SD(N_PURR), SD(N_SURPRISE), SD(N_ANGRY), SD(N_YAWN)
+  {nullptr,0}, SD(N_BOOT), SD(N_TAP), SD(N_HAPPY), SD(N_PURR),
+  SD(N_SURPRISE), SD(N_ANGRY), SD(N_YAWN), SD(N_ALARM)
 };
 
 I2SClass i2s;
@@ -108,8 +110,8 @@ static void playNotes(const SoundDef &sd) {
           float f = nt.f0 + (nt.f1 - nt.f0) * t;
           phase += TWO_PI_F * f / SAMPLE_RATE;
           if (phase > TWO_PI_F) phase -= TWO_PI_F;
-          float env = min(1.0f, idx / (0.01f * SAMPLE_RATE)) * min(1.0f, (total - idx) / (0.03f * SAMPLE_RATE));
-          v = (int16_t)(sinf(phase) * 0.65f * env * (nt.vol / 100.0f) * MASTER_VOLUME * 32767);
+          float env = min(1.0f, idx / (0.012f * SAMPLE_RATE)) * min(1.0f, (total - idx) / (0.04f * SAMPLE_RATE));
+          v = (int16_t)(sinf(phase) * 0.6f * env * (nt.vol / 100.0f) * MASTER_VOLUME * 32767);
         }
         buf[2 * k] = v; buf[2 * k + 1] = v;
       }
@@ -118,7 +120,7 @@ static void playNotes(const SoundDef &sd) {
     }
   }
   memset(buf, 0, sizeof(buf));
-  for (int i = 0; i < 6; i++) i2s.write((uint8_t *)buf, 256 * 4);
+  for (int i = 0; i < 5; i++) i2s.write((uint8_t *)buf, 256 * 4);
 }
 
 static void audioTask(void *) {
@@ -181,74 +183,85 @@ enum Mood : uint8_t { M_NEUTRAL, M_HAPPY, M_SLEEPY, M_ANGRY, M_SAD, M_SURPRISED,
 struct Expr { float tired, angry, happy, scale, open; };
 Expr exprFor(Mood m) {
   switch (m) {
-    case M_HAPPY:     return {0.00f, 0.00f, 0.50f, 1.00f, 1.00f};
-    case M_LOVE:      return {0.00f, 0.00f, 0.85f, 1.00f, 1.00f};
-    case M_SLEEPY:    return {0.45f, 0.00f, 0.00f, 0.95f, 0.75f};
-    case M_ANGRY:     return {0.00f, 0.65f, 0.00f, 0.95f, 1.00f};
-    case M_SAD:       return {0.55f, 0.00f, 0.00f, 0.95f, 1.00f};
-    case M_SURPRISED: return {0.00f, 0.00f, 0.00f, 1.12f, 1.00f};
-    case M_DIZZY:     return {0.15f, 0.00f, 0.00f, 1.00f, 1.00f};
-    case M_ASLEEP:    return {0.00f, 0.00f, 0.00f, 0.95f, 0.06f};
+    case M_HAPPY:     return {0.00f, 0.00f, 0.45f, 1.00f, 1.00f};
+    case M_LOVE:      return {0.00f, 0.00f, 0.80f, 1.02f, 1.00f};
+    case M_SLEEPY:    return {0.40f, 0.00f, 0.00f, 0.96f, 0.78f};
+    case M_ANGRY:     return {0.00f, 0.60f, 0.00f, 0.96f, 1.00f};
+    case M_SAD:       return {0.50f, 0.00f, 0.00f, 0.96f, 1.00f};
+    case M_SURPRISED: return {0.00f, 0.00f, 0.00f, 1.10f, 1.00f};
+    case M_DIZZY:     return {0.12f, 0.00f, 0.00f, 1.00f, 1.00f};
+    case M_ASLEEP:    return {0.00f, 0.00f, 0.00f, 0.96f, 0.05f};
     default:          return {0.00f, 0.00f, 0.00f, 1.00f, 1.00f};
   }
 }
 Expr cur = exprFor(M_NEUTRAL);
-float joy = 60, energy = 80, annoy = 0;
-uint32_t lastInteract = 0; bool asleep = false;
+float joy = 62, energy = 78, annoy = 0;
+uint32_t lastInteract = 0;
 Mood baseMood = M_NEUTRAL, reactMood = M_NEUTRAL;
 uint32_t reactEnd = 0, reactStart = 0; bool reacting = false;
 bool held = false; uint32_t liftMs = 0, stillMs = 0, lastShake = 0;
 uint32_t peakTimes[6]; uint8_t peakCount = 0; float prevDyn = 0;
 uint32_t lastTap = 0; uint8_t tapBurst = 0; uint32_t lastPurr = 0; bool petting = false;
-float blinkF = 1, blinkTarget = 1; uint8_t blinkPhase = 0; uint32_t nextBlink = 1800, blinkT = 0;
+float blinkF = 1, blinkTarget = 1; uint8_t blinkPhase = 0; uint32_t nextBlink = 2000, blinkT = 0;
+uint8_t blinkCount = 0;
 float lookX = 0, lookY = 0, tLookX = 0, tLookY = 0; uint32_t nextLook = 0;
+float breath = 0;
 
-void applyBrightness() { panel->setBrightness(asleep ? 50 : 180); }
+// Alarm
+uint32_t alarmAt = 0;   // millis when to fire, 0 = none
+bool alarmRinging = false;
+uint32_t lastAlarmSound = 0;
+
+void applyBrightness() {
+  uint8_t b = asleep ? max(30, brightness / 4) : brightness;
+  panel->setBrightness(b);
+}
+
 void react(Mood m, uint32_t ms) { reactMood = m; reactStart = millis(); reactEnd = reactStart + ms; reacting = true; }
 void noteInteraction() { lastInteract = millis(); }
 void wakeUp(bool startled) {
   if (!asleep) return;
-  asleep = false; energy = max(energy, 45.f); applyBrightness();
+  asleep = false; energy = max(energy, 50.f); applyBrightness();
   sound(SND_YAWN);
-  if (startled) react(M_SURPRISED, 500);
+  if (startled) react(M_SURPRISED, 600);
 }
 void goToSleep() { asleep = true; applyBrightness(); sound(SND_YAWN); }
 
 void onTap() {
   uint32_t now = millis(); noteInteraction();
+  if (alarmRinging) { alarmRinging = false; alarmAt = 0; sound(SND_TAP); return; }
   if (asleep) { wakeUp(true); return; }
-  if (now - lastTap < 550) tapBurst++; else tapBurst = 1; lastTap = now;
+  if (now - lastTap < 500) tapBurst++; else tapBurst = 1; lastTap = now;
   joy = clampf(joy + 5, 0, 100);
-  if (tapBurst >= 5) { annoy = clampf(annoy + 18, 0, 100); react(M_ANGRY, 1100); sound(SND_ANGRY); tapBurst = 0; }
-  else { annoy = clampf(annoy - 2, 0, 100); react(M_HAPPY, 650); sound(random(2) ? SND_TAP : SND_HAPPY); blinkPhase = 0; nextBlink = now; }
+  if (tapBurst >= 5) { annoy = clampf(annoy + 16, 0, 100); react(M_ANGRY, 1200); sound(SND_ANGRY); tapBurst = 0; }
+  else { annoy = clampf(annoy - 2, 0, 100); react(M_HAPPY, 700); sound(random(2) ? SND_TAP : SND_HAPPY); blinkPhase = 0; nextBlink = now; }
 }
-void onPickup() { noteInteraction(); wakeUp(false); energy = clampf(energy + 4, 0, 100); react(M_SURPRISED, 900); sound(SND_SURPRISE); }
-void onPutDown() { noteInteraction(); joy = clampf(joy + 4, 0, 100); react(M_HAPPY, 1000); sound(SND_HAPPY); }
+void onPickup() { noteInteraction(); wakeUp(false); energy = clampf(energy + 4, 0, 100); react(M_SURPRISED, 1000); sound(SND_SURPRISE); }
+void onPutDown() { noteInteraction(); joy = clampf(joy + 4, 0, 100); react(M_HAPPY, 1100); sound(SND_HAPPY); }
 void onShake(bool strong) {
   noteInteraction(); wakeUp(false);
-  if (strong) { annoy = clampf(annoy + 28, 0, 100); joy = clampf(joy - 4, 0, 100); react(M_ANGRY, 1800); sound(SND_ANGRY); }
-  else { annoy = clampf(annoy + 6, 0, 100); react(M_DIZZY, 1400); sound(SND_SURPRISE); }
+  if (strong) { annoy = clampf(annoy + 25, 0, 100); joy = clampf(joy - 3, 0, 100); react(M_ANGRY, 2000); sound(SND_ANGRY); }
+  else { annoy = clampf(annoy + 5, 0, 100); react(M_DIZZY, 1600); sound(SND_SURPRISE); }
 }
 
 void updateMood(float dt, uint32_t now) {
   float idle = (now - lastInteract) / 1000.f;
-  joy += (58 - joy) * (1 - expf(-dt / 90.f));
-  if (idle > 90) joy -= 0.1f * dt;
-  if (asleep) energy += 1.1f * dt; else energy -= 0.06f * dt;
-  annoy -= 3.2f * dt;
+  joy += (60 - joy) * (1 - expf(-dt / 100.f));
+  if (idle > 80) joy -= 0.08f * dt;
+  if (asleep) energy += 1.0f * dt; else energy -= 0.05f * dt;
+  annoy -= 3.0f * dt;
   joy = clampf(joy, 0, 100); energy = clampf(energy, 0, 100); annoy = clampf(annoy, 0, 100);
-  if (!asleep && energy < 20 && idle > 22) goToSleep();
-  if (asleep && energy > 85) { asleep = false; applyBrightness(); sound(SND_YAWN); }
+  if (!asleep && energy < 22 && idle > 20) goToSleep();
+  if (asleep && energy > 82) { asleep = false; applyBrightness(); sound(SND_YAWN); }
   Mood old = baseMood;
   if (asleep) baseMood = M_ASLEEP;
-  else if (annoy > 48) baseMood = M_ANGRY;
-  else if (energy < 32) baseMood = M_SLEEPY;
-  else if (joy < 32) baseMood = M_SAD;
-  else if (joy > 68) baseMood = M_HAPPY;
+  else if (annoy > 45) baseMood = M_ANGRY;
+  else if (energy < 35) baseMood = M_SLEEPY;
+  else if (joy < 35) baseMood = M_SAD;
+  else if (joy > 65) baseMood = M_HAPPY;
   else baseMood = M_NEUTRAL;
   if (baseMood != old && !reacting) {
-    if (baseMood == M_SLEEPY) sound(SND_YAWN);
-    else if (baseMood == M_SAD) sound(SND_YAWN);
+    if (baseMood == M_SLEEPY || baseMood == M_SAD) sound(SND_YAWN);
     else if (baseMood == M_HAPPY) sound(SND_HAPPY);
   }
 }
@@ -256,7 +269,7 @@ void updateMood(float dt, uint32_t now) {
 void touchDown(int x, int y, uint32_t now) {
   ts.down = true; ts.x = ts.sx = x; ts.y = ts.sy = y; ts.t0 = now; ts.path = 0;
   noteInteraction();
-  if (asleep) { wakeUp(true); }
+  if (asleep) wakeUp(true);
 }
 void touchMove(int x, int y, uint32_t now) {
   int dx = x - ts.x, dy = y - ts.y;
@@ -265,11 +278,11 @@ void touchMove(int x, int y, uint32_t now) {
   static int dir = 0, rev = 0;
   int nd = dx > 6 ? 1 : (dx < -6 ? -1 : 0);
   if (nd && nd != dir) { rev++; dir = nd; }
-  if (rev >= 3 && ts.path > 70) petting = true;
+  if (rev >= 3 && ts.path > 60) petting = true;
 }
 void touchUp(uint32_t now) {
   ts.down = false;
-  bool tap = (now - ts.t0) < 380 && ts.path < 28;
+  bool tap = (now - ts.t0) < 400 && ts.path < 30;
   if (tap && !petting) onTap();
   petting = false;
 }
@@ -277,7 +290,7 @@ void pollTouch(uint32_t now) {
   if (!touchOK) return;
   static uint32_t last = 0;
   if (!(touchFlag || (ts.down && now - last >= 16))) {
-    if (ts.down && now - ts.lastSeen > 70) touchUp(now);
+    if (ts.down && now - ts.lastSeen > 80) touchUp(now);
     return;
   }
   touchFlag = false; last = now;
@@ -287,7 +300,7 @@ void pollTouch(uint32_t now) {
     ts.lastSeen = now;
     int x = constrain(px[0], 0, SCREEN_W - 1), y = constrain(py[0], 0, SCREEN_H - 1);
     if (!ts.down) touchDown(x, y, now); else touchMove(x, y, now);
-  } else if (ts.down && now - ts.lastSeen > 70) touchUp(now);
+  } else if (ts.down && now - ts.lastSeen > 80) touchUp(now);
 }
 
 void pollMotion(uint32_t now) {
@@ -296,23 +309,23 @@ void pollMotion(uint32_t now) {
   if (!readIMU()) return;
   float mag = sqrtf(ax * ax + ay * ay + az * az);
   float dyn = fabsf(mag - 1.f);
-  if (dyn > 0.6f && prevDyn <= 0.6f && peakCount < 6) peakTimes[peakCount++] = now;
+  if (dyn > 0.55f && prevDyn <= 0.55f && peakCount < 6) peakTimes[peakCount++] = now;
   prevDyn = dyn;
   uint8_t k = 0;
-  for (uint8_t i = 0; i < peakCount; i++) if (now - peakTimes[i] < 750) peakTimes[k++] = peakTimes[i];
+  for (uint8_t i = 0; i < peakCount; i++) if (now - peakTimes[i] < 800) peakTimes[k++] = peakTimes[i];
   peakCount = k;
-  if (peakCount >= 3 && now - lastShake > 1100) {
-    lastShake = now; peakCount = 0; onShake(peakCount >= 4); held = true; stillMs = 0; return;
+  if (peakCount >= 3 && now - lastShake > 1200) {
+    lastShake = now; onShake(peakCount >= 4); peakCount = 0; held = true; stillMs = 0; return;
   }
   float dot = ax * restX + ay * restY + az * restZ;
   float cosA = clampf(dot / (max(mag, 0.01f) * max(sqrtf(restX*restX + restY*restY + restZ*restZ), 0.01f)), -1, 1);
   float tilt = acosf(cosA) * 57.3f;
   if (dyn < 0.05f) stillMs += dt; else stillMs = 0;
-  if (!held && stillMs > 650) { restX = lerpf(restX, ax, 0.12f); restY = lerpf(restY, ay, 0.12f); restZ = lerpf(restZ, az, 0.12f); }
+  if (!held && stillMs > 600) { restX = lerpf(restX, ax, 0.1f); restY = lerpf(restY, ay, 0.1f); restZ = lerpf(restZ, az, 0.1f); }
   if (!held) {
-    if ((dyn > 0.07f && dyn < 0.55f) || tilt > 16) liftMs += dt; else liftMs = 0;
-    if (liftMs > 180) { held = true; liftMs = 0; onPickup(); }
-  } else if ((stillMs > 900 && tilt < 9) || stillMs > 1800) {
+    if ((dyn > 0.06f && dyn < 0.5f) || tilt > 15) liftMs += dt; else liftMs = 0;
+    if (liftMs > 200) { held = true; liftMs = 0; onPickup(); }
+  } else if ((stillMs > 800 && tilt < 10) || stillMs > 1600) {
     held = false; restX = ax; restY = ay; restZ = az; onPutDown();
   }
 }
@@ -321,93 +334,126 @@ void updateAnim(uint32_t now, float &offX, float &offY) {
   if (reacting && now >= reactEnd) reacting = false;
   Mood shown = reacting ? reactMood : baseMood;
   Expr t = exprFor(shown);
-  float e = 0.18f;
+  float e = 0.16f;
   cur.tired = lerpf(cur.tired, t.tired, e);
   cur.angry = lerpf(cur.angry, t.angry, e);
   cur.happy = lerpf(cur.happy, t.happy, e);
   cur.scale = lerpf(cur.scale, t.scale, e);
   cur.open  = lerpf(cur.open,  t.open,  e);
 
-  if (!asleep) {
-    if (blinkPhase == 0 && now >= nextBlink) { blinkTarget = 0; blinkPhase = 1; blinkT = now + 70; }
-    else if (blinkPhase == 1 && now >= blinkT) { blinkTarget = 1; blinkPhase = 2; blinkT = now + 90; }
-    else if (blinkPhase == 2 && now >= blinkT) {
-      blinkPhase = 0;
-      nextBlink = now + random(1800, 5200);
-      if (random(7) == 0) nextBlink = now + 180;
-    }
-  } else blinkTarget = 1;
-  blinkF = lerpf(blinkF, blinkTarget, 0.5f);
+  // Breathing scale
+  breath = 1.0f + 0.012f * sinf(now / 900.f);
 
-  // Stronger, more frequent looking
-  if (petting) {
-    tLookX = clampf((ts.x - CENTER_X) * 0.14f, -28, 28);
-    tLookY = clampf((ts.y - CENTER_Y) * 0.11f, -20, 20);
-  } else if (held && imuOK) {
-    tLookX = clampf(ax * 32, -28, 28);
-    tLookY = clampf(ay * 26, -20, 20);
-  } else if (shown == M_NEUTRAL || shown == M_HAPPY || shown == M_SLEEPY || shown == M_SAD || shown == M_LOVE) {
-    if (now >= nextLook) {
-      tLookX = random(-30, 31);
-      tLookY = random(-18, 19);
-      if (random(5) == 0) { tLookX = 0; tLookY = 0; }
-      nextLook = now + random(600, 2200);
+  // Blinking with occasional double blink
+  if (!asleep) {
+    if (blinkPhase == 0 && now >= nextBlink) {
+      blinkTarget = 0; blinkPhase = 1; blinkT = now + 65;
+    } else if (blinkPhase == 1 && now >= blinkT) {
+      blinkTarget = 1; blinkPhase = 2; blinkT = now + 80;
+    } else if (blinkPhase == 2 && now >= blinkT) {
+      blinkPhase = 0;
+      if (blinkCount == 0 && random(4) == 0) {
+        blinkCount = 1;
+        nextBlink = now + 140;
+      } else {
+        blinkCount = 0;
+        nextBlink = now + random(1600, 4800);
+      }
     }
-    if (shown == M_SAD) tLookY = max(tLookY, 8.f);
+  } else {
+    blinkTarget = 1;
+  }
+  blinkF = lerpf(blinkF, blinkTarget, 0.45f);
+
+  // Rich looking behavior
+  if (petting) {
+    tLookX = clampf((ts.x - CENTER_X) * 0.16f, -32, 32);
+    tLookY = clampf((ts.y - CENTER_Y) * 0.12f, -22, 22);
+  } else if (held && imuOK) {
+    tLookX = clampf(ax * 36, -32, 32);
+    tLookY = clampf(ay * 28, -22, 22);
+  } else if (shown != M_ASLEEP && shown != M_ANGRY) {
+    if (now >= nextLook) {
+      int kind = random(10);
+      if (kind < 3) { tLookX = random(-34, 35); tLookY = random(-16, 17); }
+      else if (kind < 5) { tLookX = random(-40, 41); tLookY = random(-8, 9); }   // side look
+      else if (kind < 7) { tLookX = random(-10, 11); tLookY = random(-28, 5); }  // up look
+      else if (kind < 9) { tLookX = 0; tLookY = 0; }                               // center
+      else { tLookX = random(-20, 21); tLookY = random(4, 18); }                  // down look
+      nextLook = now + random(700, 2800);
+    }
+    if (shown == M_SAD) tLookY = max(tLookY, 10.f);
+    if (shown == M_SLEEPY) tLookY = max(tLookY, 4.f);
   } else {
     tLookX = 0; tLookY = 0;
   }
-  lookX = lerpf(lookX, tLookX, 0.25f);
-  lookY = lerpf(lookY, tLookY, 0.25f);
+  lookX = lerpf(lookX, tLookX, 0.22f);
+  lookY = lerpf(lookY, tLookY, 0.22f);
 
   float wobX = 0, wobY = 0;
-  float rt = reacting ? (now - reactStart) : 0;
-  if (reacting && reactMood == M_DIZZY) { wobX = 14 * cosf(rt * 0.014f); wobY = 10 * sinf(rt * 0.014f); }
-  else if (reacting && reactMood == M_ANGRY) wobX = 2.2f * sinf(rt * 0.09f);
-  else if (reacting && (reactMood == M_HAPPY || reactMood == M_LOVE) && rt < 550) wobY = -4.5f * fabsf(sinf(rt * 0.013f));
-  if (asleep) wobY += 1.2f * sinf(now / 750.f);
+  float rt = reacting ? (float)(now - reactStart) : 0;
+  if (reacting && reactMood == M_DIZZY) {
+    wobX = 18 * cosf(rt * 0.012f);
+    wobY = 12 * sinf(rt * 0.012f);
+  } else if (reacting && reactMood == M_ANGRY) {
+    wobX = 2.8f * sinf(rt * 0.08f);
+  } else if (reacting && (reactMood == M_HAPPY || reactMood == M_LOVE) && rt < 700) {
+    wobY = -6.0f * fabsf(sinf(rt * 0.011f));
+  } else if (reacting && reactMood == M_SURPRISED && rt < 400) {
+    wobY = -8.0f * (1.0f - rt / 400.f);
+  }
+  if (asleep) wobY += 1.4f * sinf(now / 820.f);
+
+  // Tiny idle micro movement
+  if (!asleep && !reacting) {
+    wobX += 0.6f * sinf(now / 2100.f);
+    wobY += 0.4f * cosf(now / 1800.f);
+  }
 
   offX = lookX + wobX;
   offY = lookY + wobY;
 }
 
 void drawEyes(float offX, float offY) {
-  float sc = cur.scale;
+  float sc = cur.scale * breath;
   int w = (int)(BASE_W * sc);
   int fullH = (int)(BASE_H * sc);
   int h = (int)(fullH * cur.open * blinkF);
-  if (h < 6) h = 6;
+  if (h < 8) h = 8;
   int r = min((int)(BASE_R * sc), min(h / 2, w / 2));
-
-  int midY = BAND_H / 2;
 
   for (int s = 0; s < 2; s++) {
     bool left = (s == 0);
     int cx = CENTER_X + (left ? -1 : 1) * (BASE_SP / 2) + (int)offX;
-    int cy = midY + (int)offY;
+    int cy = CENTER_Y + (int)offY;
     int x0 = cx - w / 2;
     int y0 = cy - h / 2;
 
+    // Main eye
     gfx->fillRoundRect(x0, y0, w, h, r, EYE);
 
-    // soft highlight
-    int hlW = w / 3, hlH = max(4, h / 5);
-    gfx->fillRoundRect(x0 + 7, y0 + 5, hlW, hlH, r / 4, HIGHLIGHT);
+    // Soft upper highlight (subtle)
+    if (h > 20) {
+      int hlW = w * 2 / 5;
+      int hlH = max(6, h / 6);
+      gfx->fillRoundRect(x0 + w / 6, y0 + h / 8, hlW, hlH, r / 3, HIGHLIGHT);
+    }
 
-    int top = y0 - 1;
-    if (cur.tired > 0.04f) {
-      int d = (int)(h * 0.48f * cur.tired);
+    // Lids
+    int top = y0 - 2;
+    if (cur.tired > 0.05f) {
+      int d = (int)(h * 0.45f * cur.tired);
       if (left) gfx->fillTriangle(x0, top, x0 + w, top, x0, top + d, BG);
       else      gfx->fillTriangle(x0, top, x0 + w, top, x0 + w, top + d, BG);
     }
-    if (cur.angry > 0.04f) {
-      int d = (int)(h * 0.48f * cur.angry);
+    if (cur.angry > 0.05f) {
+      int d = (int)(h * 0.45f * cur.angry);
       if (left) gfx->fillTriangle(x0, top, x0 + w, top, x0 + w, top + d, BG);
       else      gfx->fillTriangle(x0, top, x0 + w, top, x0, top + d, BG);
     }
-    if (cur.happy > 0.04f) {
-      int off = (int)(fullH * 0.42f * cur.happy);
-      gfx->fillRoundRect(x0 - 1, y0 + h - off, w + 2, fullH, r, BG);
+    if (cur.happy > 0.05f) {
+      int off = (int)(fullH * 0.40f * cur.happy);
+      gfx->fillRoundRect(x0 - 2, y0 + h - off, w + 4, fullH, r, BG);
     }
   }
 }
@@ -423,35 +469,77 @@ void renderFrame(uint32_t now) {
 void updatePetting(float dt, uint32_t now) {
   if (petting) {
     noteInteraction();
-    joy = clampf(joy + 4.5f * dt, 0, 100);
-    annoy = clampf(annoy - 5.5f * dt, 0, 100);
-    if (!reacting || reactMood != M_LOVE) react(M_LOVE, 550);
-    else reactEnd = now + 550;
-    if (now - lastPurr > 650) { sound(SND_PURR); lastPurr = now; }
+    joy = clampf(joy + 4.0f * dt, 0, 100);
+    annoy = clampf(annoy - 5.0f * dt, 0, 100);
+    if (!reacting || reactMood != M_LOVE) react(M_LOVE, 600);
+    else reactEnd = now + 600;
+    if (now - lastPurr > 700) { sound(SND_PURR); lastPurr = now; }
+  }
+}
+
+void checkAlarm(uint32_t now) {
+  if (alarmAt && now >= alarmAt && !alarmRinging) {
+    alarmRinging = true;
+    wakeUp(true);
+    react(M_SURPRISED, 2000);
+  }
+  if (alarmRinging && now - lastAlarmSound > 1800) {
+    sound(SND_ALARM);
+    lastAlarmSound = now;
   }
 }
 
 void handleSerial() {
+  static char buf[32];
+  static uint8_t idx = 0;
   while (Serial.available()) {
     char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      buf[idx] = 0;
+      if (idx > 0) {
+        if (buf[0] == 'b' && idx > 1) {
+          int v = atoi(buf + 1);
+          brightness = constrain(v, 20, 255);
+          prefs.putUChar("bri", brightness);
+          applyBrightness();
+          Serial.printf("brightness %d\n", brightness);
+        } else if (buf[0] == 'a' && idx > 1) {
+          int mins = atoi(buf + 1);
+          if (mins > 0 && mins < 1440) {
+            alarmAt = millis() + (uint32_t)mins * 60000UL;
+            alarmRinging = false;
+            Serial.printf("alarm in %d min\n", mins);
+          }
+        } else if (strcmp(buf, "off") == 0) {
+          alarmAt = 0; alarmRinging = false;
+          Serial.println("alarm off");
+        }
+      }
+      idx = 0;
+    } else if (idx < 30) {
+      buf[idx++] = c;
+    }
     switch (c) {
-      case 'n': react(M_NEUTRAL, 1800); break;
-      case 'h': react(M_HAPPY, 1800); break;
-      case 's': react(M_SLEEPY, 1800); break;
-      case 'a': react(M_ANGRY, 1800); break;
-      case 'd': react(M_SAD, 1800); break;
-      case 'u': react(M_SURPRISED, 1800); break;
-      case 'l': react(M_LOVE, 1800); break;
+      case 'n': react(M_NEUTRAL, 2000); break;
+      case 'h': react(M_HAPPY, 2000); break;
+      case 's': react(M_SLEEPY, 2000); break;
+      case 'g': react(M_ANGRY, 2000); break;
+      case 'd': react(M_SAD, 2000); break;
+      case 'u': react(M_SURPRISED, 2000); break;
+      case 'l': react(M_LOVE, 2000); break;
       case 'z': asleep ? wakeUp(true) : goToSleep(); break;
+      case '+': brightness = min(255, brightness + 20); prefs.putUChar("bri", brightness); applyBrightness(); break;
+      case '-': brightness = max(20, brightness - 20); prefs.putUChar("bri", brightness); applyBrightness(); break;
     }
   }
 }
 
 void setup() {
   Serial.begin(115200); delay(200);
-  Serial.println("Charlie smooth booting...");
+  Serial.println("Charlie alive booting...");
   prefs.begin("charlie", false);
   muted = prefs.getBool("mute", false);
+  brightness = prefs.getUChar("bri", 160);
 
   if (!gfx->begin()) { Serial.println("Display fail"); while (1) delay(1000); }
   gfx->fillScreen(BG); gfx->flush();
@@ -473,9 +561,11 @@ void setup() {
   randomSeed(esp_random());
   uint32_t now = millis();
   lastInteract = now;
-  nextBlink = now + 1000;
-  nextLook = now + 400;
+  nextBlink = now + 900;
+  nextLook = now + 300;
   sound(SND_BOOT);
+
+  Serial.println("Serial: n h s g d u l z  + -  b120  a30  off");
 }
 
 void loop() {
@@ -485,6 +575,7 @@ void loop() {
   handleSerial();
   pollTouch(now);
   pollMotion(now);
+  checkAlarm(now);
 
   if (now - lastMood >= 100) {
     float dt = (now - lastMood) / 1000.f;
