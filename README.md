@@ -1,13 +1,13 @@
 # Charlie Eyes
 
-Alive desktop companion with Emo/Vector/Cozmo-style rounded-rectangle eyes (with shading) for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
+Smooth desktop companion with soft cyan rounded-rectangle eyes for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
 
 ## Features
-- Mood system that drifts and reacts (happy, sleepy, angry, sad, love, surprised, dizzy, asleep)
-- Touch, petting (swipe back and forth), shake, and pick-up/put-down reactions + cute sounds
-- Autonomous idle animations so he feels alive
-- Swipe **up from the bottom** to open the menu (shape presets + color presets)
-- Settings remembered after power-off
+- Eyes that actually look around (gaze movement, not just blinking)
+- Mood system that drifts and reacts
+- Touch, petting (swipe back and forth), shake, and pick-up/put-down reactions + soft sounds
+- No menu — fixed soft cyan color that is easier on the eyes
+- Band rendering for lower lag
 
 ## Get the firmware
 1. Open the **Actions** tab → latest successful "Build Charlie Eyes" run.
@@ -18,8 +18,5 @@ Alive desktop companion with Emo/Vector/Cozmo-style rounded-rectangle eyes (with
 - Tap the screen
 - Pet by swiping back and forth
 - Shake or pick him up
-- Swipe up from the bottom for the menu
 
-Serial (115200): `n h s a d u l z m` for moods/menu, etc.
-
-Future: Wi-Fi hotspot + Lovable app for personality quiz presets.
+Serial (115200): `n h s a d u l z` for moods / sleep.
