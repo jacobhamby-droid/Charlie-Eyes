@@ -9,6 +9,7 @@
     flash    -> remembers eye color + orientation
     wifi     -> SoftAP hotspot + station mode + simple config page
     base44   -> polls a Base44 app endpoint for remote commands
+    ble      -> advertises as Charlie-Eyes for Chrome Web Bluetooth control
 
   Serial (115200):  d demo all animations   n next animation   c next color
                     o rotate 'up' 90 deg    m mirror rotation  s sleep/wake   f fps on/off
@@ -21,6 +22,10 @@
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include "Arduino_GFX_Library.h"
 #include "TouchDrvCSTXXX.hpp"
 #include "SensorQMI8658.hpp"
@@ -38,6 +43,10 @@
 #define IIC_SCL   14
 #define TP_INT    11
 #define TP_RESET  40
+
+// BLE UUIDs
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 static const uint8_t BRIGHTNESS = 190;  // AMOLED: lower = longer life for the pixels
 static const char* AP_SSID = "Charlie-Eyes";
@@ -67,6 +76,34 @@ static int lastRows = 0;
 String wifiSsid, wifiPass, base44Url, base44Token;
 bool wifiConnected = false;
 
+// BLE
+BLEServer* pServer = nullptr;
+BLECharacteristic* pCharacteristic = nullptr;
+bool deviceConnected = false;
+String bleCommand = "";
+
+class MyServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    deviceConnected = true;
+    Serial.println("BLE client connected");
+  }
+  void onDisconnect(BLEServer* pServer) {
+    deviceConnected = false;
+    Serial.println("BLE client disconnected");
+    BLEDevice::startAdvertising();
+  }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      bleCommand = String(value.c_str());
+      Serial.printf("BLE command: %s\n", bleCommand.c_str());
+    }
+  }
+};
+
 static void IRAM_ATTR onTouchIrq() { touchIrq = true; }
 
 static void loadSettings() {
@@ -95,6 +132,55 @@ static void saveSettings() {
   Serial.println("settings saved");
 }
 
+void setupBLE() {
+  BLEDevice::init("Charlie-Eyes");
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID,
+                      BLECharacteristic::PROPERTY_READ |
+                      BLECharacteristic::PROPERTY_WRITE |
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+  pCharacteristic->setCallbacks(new MyCallbacks());
+  pCharacteristic->addDescriptor(new BLE2902());
+  pCharacteristic->setValue("ready");
+  pService->start();
+
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+  Serial.println("BLE advertising as Charlie-Eyes");
+}
+
+void processBleCommand() {
+  if (bleCommand.length() == 0) return;
+  String cmd = bleCommand;
+  bleCommand = "";
+  cmd.trim();
+  cmd.toLowerCase();
+
+  if (cmd == "love" || cmd == "heart") ch::forceAnim(ch::AN_LOVE);
+  else if (cmd == "angry") ch::forceAnim(ch::AN_ANGRY);
+  else if (cmd == "wink" || cmd == "wink_l") ch::forceAnim(ch::AN_WINK_L);
+  else if (cmd == "wink_r") ch::forceAnim(ch::AN_WINK_R);
+  else if (cmd == "sleep") ch::toggleSleep();
+  else if (cmd == "wake") { if (ch::sleeping) ch::toggleSleep(); }
+  else if (cmd.startsWith("color:")) {
+    int c = cmd.substring(6).toInt();
+    if (c >= 0 && c < 8) {
+      ch::settings.colorIdx = c;
+      ch::settings.dirty = true;
+    }
+  }
+  else Serial.printf("unknown BLE cmd: %s\n", cmd.c_str());
+}
+
 // ---------- Config web page ----------
 const char* configPage = R"rawliteral(
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -109,7 +195,7 @@ const char* configPage = R"rawliteral(
 <label>Base44 Token<br><input name="b44tok" value="%B44TOK%"></label>
 <button type="submit">Save & Reboot</button>
 </form>
-<p>Hotspot: Charlie-Eyes / charlie123<br>Once saved, Charlie will join your WiFi and poll Base44.</p>
+<p>Hotspot: Charlie-Eyes / charlie123<br>BLE name: Charlie-Eyes<br>Once saved, Charlie will join your WiFi and poll Base44.</p>
 </body></html>
 )rawliteral";
 
@@ -173,10 +259,9 @@ void pollBase44() {
     String payload = http.getString();
     JsonDocument doc;
     if (deserializeJson(doc, payload) == DeserializationError::Ok) {
-      const char* anim = doc["anim"] | doc[0]["anim"] | nullptr;  // support single object or array
+      const char* anim = doc["anim"] | doc[0]["anim"] | nullptr;
       int color = doc["color"] | doc[0]["color"] | -1;
       if (anim) {
-        // Map common names to anim ids (extend as needed)
         String a = String(anim);
         a.toLowerCase();
         if (a == "love" || a == "heart") ch::forceAnim(ch::AN_LOVE);
@@ -206,7 +291,6 @@ static void setupTouch() {
   haveTouch = touch.begin(Wire, 0x5A, IIC_SDA, IIC_SCL);
   if (!haveTouch) { Serial.println("touch: NOT FOUND"); return; }
   Serial.printf("touch: %s\n", touch.getModelName());
-  // same sequence as Waveshare's working LVGL example
   touch.sleep();
   touch.reset();
   touch.setMaxCoordinates(ch::SCR_W, ch::SCR_H);
@@ -224,7 +308,6 @@ static void setupImu() {
 }
 
 static void readInputs(uint32_t now, ch::Input &in) {
-  // ---- touch: poll when the controller signalled, and keep polling while a finger is down
   if (haveTouch && (touchIrq || touchDown)) {
     touchIrq = false;
     uint8_t n = touch.getPoint(tX, tY, 1);
@@ -239,7 +322,6 @@ static void readInputs(uint32_t now, ch::Input &in) {
   in.tx = tX[0];
   in.ty = tY[0];
 
-  // ---- IMU (acceleration in g)
   in.imu = haveImu;
   if (haveImu && qmi.getDataReady()) {
     float x, y, z;
@@ -282,11 +364,11 @@ void setup() {
   setupTouch();
   setupImu();
   setupWiFi();
+  setupBLE();
 
   ch::init(fb, esp_random());
   ch::start(millis());
 
-  // first frame, then fade the backlight up so there is no flash of garbage
   ch::Input in;
   int y0, y1;
   ch::update(millis(), 0.016f, in);
@@ -307,6 +389,7 @@ void loop() {
   handleSerial();
   handleWiFi();
   pollBase44();
+  processBleCommand();
 
   ch::Input in;
   readInputs(now, in);
@@ -324,7 +407,6 @@ void loop() {
     if (now - fpsT >= 1000) { Serial.printf("fps %d  rows %d\n", fpsCount, lastRows); fpsCount = 0; fpsT = now; }
   }
 
-  // ~60 fps cap
   uint32_t spent = millis() - now;
   if (spent < 14) delay(14 - spent);
 }
