@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Charlie Eyes — BLE Control</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 2rem auto; padding: 1rem; background: #111; color: #eee; }
+    button { display: block; width: 100%; padding: 0.8rem; margin: 0.5rem 0; font-size: 1.1rem; border: 0; border-radius: 8px; background: #0af; color: #000; cursor: pointer; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .colors { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin: 1rem 0; }
+    .colors button { aspect-ratio: 1; font-size: 0.8rem; }
+    #status { margin: 1rem 0; padding: 0.5rem; background: #222; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Charlie Eyes</h1>
+  <p>Chrome Web Bluetooth control</p>
+  <button id="connect">Connect to Charlie-Eyes</button>
+  <div id="status">Not connected</div>
+
+  <h3>Animations</h3>
+  <button class="cmd" data-cmd="love" disabled>Love / Hearts</button>
+  <button class="cmd" data-cmd="angry" disabled>Angry</button>
+  <button class="cmd" data-cmd="wink" disabled>Wink Left</button>
+  <button class="cmd" data-cmd="wink_r" disabled>Wink Right</button>
+  <button class="cmd" data-cmd="sleep" disabled>Sleep</button>
+  <button class="cmd" data-cmd="wake" disabled>Wake</button>
+
+  <h3>Eye Color</h3>
+  <div class="colors">
+    <button class="color" data-color="0" style="background:#50dcff" disabled>Cyan</button>
+    <button class="color" data-color="1" style="background:#78ffa0" disabled>Mint</button>
+    <button class="color" data-color="2" style="background:#ff6eaa" disabled>Pink</button>
+    <button class="color" data-color="3" style="background:#ffb030" disabled>Amber</button>
+    <button class="color" data-color="4" style="background:#ff463c" disabled>Red</button>
+    <button class="color" data-color="5" style="background:#aa78ff" disabled>Violet</button>
+    <button class="color" data-color="6" style="background:#ffe85a" disabled>Yellow</button>
+    <button class="color" data-color="7" style="background:#ebf0ff" disabled>White</button>
+  </div>
+
+  <script>
+    const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+    const CHAR_UUID    = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+    let characteristic = null;
+
+    const statusEl = document.getElementById('status');
+    const connectBtn = document.getElementById('connect');
+    const cmdBtns = document.querySelectorAll('.cmd');
+    const colorBtns = document.querySelectorAll('.color');
+
+    function setConnected(on) {
+      connectBtn.disabled = on;
+      cmdBtns.forEach(b => b.disabled = !on);
+      colorBtns.forEach(b => b.disabled = !on);
+      statusEl.textContent = on ? 'Connected to Charlie-Eyes' : 'Not connected';
+    }
+
+    connectBtn.onclick = async () => {
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'Charlie-Eyes' }],
+          optionalServices: [SERVICE_UUID]
+        });
+        statusEl.textContent = 'Connecting…';
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        characteristic = await service.getCharacteristic(CHAR_UUID);
+        setConnected(true);
+        device.addEventListener('gattserverdisconnected', () => setConnected(false));
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        console.error(err);
+      }
+    };
+
+    async function send(cmd) {
+      if (!characteristic) return;
+      const encoder = new TextEncoder();
+      await characteristic.writeValue(encoder.encode(cmd));
+      statusEl.textContent = 'Sent: ' + cmd;
+    }
+
+    cmdBtns.forEach(btn => {
+      btn.onclick = () => send(btn.dataset.cmd);
+    });
+
+    colorBtns.forEach(btn => {
+      btn.onclick = () => send('color:' + btn.dataset.color);
+    });
+  </script>
+</body>
+</html>
