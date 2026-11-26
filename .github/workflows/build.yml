@@ -1,6 +1,8 @@
 name: Build Charlie Eyes
 
-on: [push]
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,16 +14,32 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install PlatformIO & Build
-        run: |
-          pip install platformio
-          pio run
+      - name: Install PlatformIO and esptool
+        run: pip install platformio esptool
 
-      - name: Upload Firmware
+      - name: Build
+        run: pio run
+
+      - name: Merge into one flashable .bin
+        run: |
+          BUILD=.pio/build/charlie-eyes
+          BOOT_APP0=$(find ~/.platformio -name boot_app0.bin | head -1)
+          echo "boot_app0: $BOOT_APP0"
+          python -m esptool --chip esp32s3 merge_bin \
+            -o charlie-full.bin \
+            --flash_mode keep --flash_size keep \
+            0x0 $BUILD/bootloader.bin \
+            0x8000 $BUILD/partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 $BUILD/firmware.bin
+          ls -l charlie-full.bin
+
+      - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: charlie-eyes-firmware
           path: |
+            charlie-full.bin
             .pio/build/charlie-eyes/bootloader.bin
             .pio/build/charlie-eyes/partitions.bin
             .pio/build/charlie-eyes/firmware.bin
