@@ -16,7 +16,11 @@
 #include <Preferences.h>
 #include <ESP_I2S.h>
 #include <Arduino_GFX_Library.h>
-#include <TouchDrvCST92xx.h>
+#if __has_include(<TouchDrv.hpp>)
+  #include <TouchDrv.hpp>
+#else
+  #include <TouchDrvCST92xx.h>
+#endif
 
 #define MASTER_VOLUME 0.55f
 #define PA_ACTIVE_LEVEL HIGH
