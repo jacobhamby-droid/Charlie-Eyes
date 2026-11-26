@@ -1,17 +1,17 @@
 # Charlie Eyes
 
-Super simple firmware for the **Waveshare ESP32-S3-Touch-AMOLED-1.75**.
+Desktop companion with squircle eyes for the Waveshare ESP32-S3-Touch-AMOLED-1.75 (466x466, CO5300).
 
-**Goal:** Turn the screen on and show two eyes. Nothing else.
+## Get the firmware
+1. Open the **Actions** tab, then the latest "Build Charlie Eyes" run (any branch).
+2. Download the **charlie-eyes-firmware** artifact and unzip it.
+3. `charlie-full.bin` is the single file to flash (at address 0x0).
 
-## How to use
+## Flash from the browser (Chrome or Edge)
+1. Plug the board in over USB (hold BOOT while plugging in if it isn't detected).
+2. Open https://web.esphome.io, click **Connect**, pick the port, then **Install** and choose `charlie-full.bin`.
 
-1. Wait for the GitHub Action to finish building (Actions tab).
-2. Download the `charlie-eyes-firmware` artifact.
-3. Unzip it.
-4. Flash with ESP Web Tools / esptool:
-   - `bootloader.bin` → `0x0`
-   - `partitions.bin` → `0x8000`
-   - `firmware.bin` → `0x10000`
+## What you should see
+On boot: full-screen RED, GREEN, BLUE (about 0.7 s each, a quick color check), then Charlie's eyes.
 
-After flashing you should see two white eyes on a black screen.
+Serial monitor (115200): `0`-`6` pick a mood, `a` toggles auto mood, `b` blink, `l` look around.
