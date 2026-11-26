@@ -1,6 +1,7 @@
 /*
- * Charlie Eyes – direct panel only (no canvas)
- * Ends on solid RED so we know if any pixels work
+ * Charlie Eyes
+ * Waveshare ESP32-S3-Touch-AMOLED-1.75
+ * Uses Canvas (recommended for CO5300) + newer GFX library
  */
 
 #include <Arduino.h>
@@ -9,31 +10,34 @@
 #include "XPowersLib.h"
 #include <Arduino_GFX_Library.h>
 
-#define LCD_CS     12
-#define LCD_SCLK   38
-#define LCD_D0     4
-#define LCD_D1     5
-#define LCD_D2     6
-#define LCD_D3     7
-#define LCD_RST    39
-#define TP_RST     40
+#define LCD_CS   12
+#define LCD_SCK  38
+#define LCD_D0   4
+#define LCD_D1   5
+#define LCD_D2   6
+#define LCD_D3   7
+#define LCD_RST  39
+#define TP_RST   40
 
 XPowersPMU pmu;
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
-  LCD_CS, LCD_SCLK, LCD_D0, LCD_D1, LCD_D2, LCD_D3
+  LCD_CS, LCD_SCK, LCD_D0, LCD_D1, LCD_D2, LCD_D3
 );
 
-Arduino_CO5300 *gfx = new Arduino_CO5300(
+Arduino_CO5300 *panel = new Arduino_CO5300(
   bus, LCD_RST, 0,
   466, 466,
   6, 0, 0, 0
 );
 
+// Draw on canvas, then flush to panel
+Arduino_Canvas *gfx = new Arduino_Canvas(466, 466, panel);
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("=== Charlie Eyes ===");
+  Serial.println("Charlie Eyes v2");
 
   Wire.begin(15, 14);
 
@@ -46,47 +50,57 @@ void setup() {
     pmu.setBLDO1Voltage(3300); pmu.enableBLDO1();
     pmu.setBLDO2Voltage(3300); pmu.enableBLDO2();
     pmu.setDLDO1Voltage(3300); pmu.enableDLDO1();
-    delay(120);
+    delay(100);
   } else {
-    Serial.println("PMU FAILED");
+    Serial.println("PMU FAIL");
   }
 
   pinMode(LCD_RST, OUTPUT);
   pinMode(TP_RST, OUTPUT);
   digitalWrite(LCD_RST, LOW);
   digitalWrite(TP_RST, LOW);
-  delay(60);
+  delay(50);
   digitalWrite(LCD_RST, HIGH);
   digitalWrite(TP_RST, HIGH);
-  delay(120);
+  delay(100);
+
+  if (!panel->begin()) {
+    Serial.println("panel begin FAIL");
+  } else {
+    Serial.println("panel begin OK");
+  }
+  panel->setBrightness(255);
 
   if (!gfx->begin()) {
-    Serial.println("begin() FAILED");
+    Serial.println("canvas begin FAIL");
   } else {
-    Serial.println("begin() OK");
+    Serial.println("canvas begin OK");
   }
 
-  gfx->setBrightness(255);   // max brightness
-
-  // Solid RED – if you see red, pixels work
-  gfx->fillScreen(RED);
-  Serial.println("fillScreen(RED) done");
-
-  delay(3000);
-
-  // Try a big white rectangle in the middle
-  gfx->fillRect(100, 100, 266, 266, WHITE);
-  Serial.println("white rect done");
-
+  // Color test – stay on each color 2 seconds
+  gfx->fillScreen(RGB565_RED);
+  gfx->flush();
+  Serial.println("RED");
   delay(2000);
 
-  // Two eyes on black
-  gfx->fillScreen(BLACK);
-  gfx->fillCircle(160, 233, 70, WHITE);
-  gfx->fillCircle(160, 233, 28, BLACK);
-  gfx->fillCircle(306, 233, 70, WHITE);
-  gfx->fillCircle(306, 233, 28, BLACK);
-  Serial.println("eyes done");
+  gfx->fillScreen(RGB565_GREEN);
+  gfx->flush();
+  Serial.println("GREEN");
+  delay(2000);
+
+  gfx->fillScreen(RGB565_BLUE);
+  gfx->flush();
+  Serial.println("BLUE");
+  delay(2000);
+
+  // Black + eyes
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(160, 233, 70, RGB565_WHITE);
+  gfx->fillCircle(160, 233, 28, RGB565_BLACK);
+  gfx->fillCircle(306, 233, 70, RGB565_WHITE);
+  gfx->fillCircle(306, 233, 28, RGB565_BLACK);
+  gfx->flush();
+  Serial.println("EYES");
 }
 
 void loop() {
