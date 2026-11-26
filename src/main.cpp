@@ -60,6 +60,10 @@ uint16_t HIGHLIGHT = 0xFFFF;
 uint16_t GREY = 0x4208;
 uint16_t RED = 0xF800;
 
+// Helpers
+static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+static inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
 Preferences prefs;
 
 // Eye presets (shape)
@@ -109,7 +113,7 @@ const int SAMPLE_RATE = 16000;
 static void playNotes(const SoundDef &sd) {
   static int16_t buf[256*2];
   float phase = 0;
-  const float TWO_PI = 6.2831853f;
+  const float TWO_PI_F = 6.2831853f;
   for (uint8_t ni=0; ni<sd.n; ni++) {
     const Note &nt = sd.notes[ni];
     int total = (SAMPLE_RATE * nt.ms)/1000;
@@ -122,8 +126,8 @@ static void playNotes(const SoundDef &sd) {
         if (nt.f0>0) {
           float t = (float)idx/total;
           float f = nt.f0 + (nt.f1-nt.f0)*t;
-          phase += TWO_PI * f / SAMPLE_RATE;
-          if (phase > TWO_PI) phase -= TWO_PI;
+          phase += TWO_PI_F * f / SAMPLE_RATE;
+          if (phase > TWO_PI_F) phase -= TWO_PI_F;
           float env = min(1.0f, idx/(0.01f*SAMPLE_RATE)) * min(1.0f, (total-idx)/(0.03f*SAMPLE_RATE));
           v = (int16_t)(sinf(phase)*0.7f*env*(nt.vol/100.0f)*MASTER_VOLUME*32767);
         }
