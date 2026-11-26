@@ -1,27 +1,25 @@
 # Charlie Eyes
 
-Desktop companion with expressive rounded-rectangle eyes for the Waveshare ESP32-S3-Touch-AMOLED-1.75 (466x466, CO5300).
+Alive desktop companion with Emo/Vector/Cozmo-style rounded-rectangle eyes (with shading) for the Waveshare ESP32-S3-Touch-AMOLED-1.75.
 
-Charlie v2 is much more alive: moods drift over time, he reacts to taps, petting (swipe back and forth), shaking, and being picked up / put down. There are synthesized sounds, eye shape presets, and a swipe-down menu.
+## Features
+- Mood system that drifts and reacts (happy, sleepy, angry, sad, love, surprised, dizzy, asleep)
+- Touch, petting (swipe back and forth), shake, and pick-up/put-down reactions + cute sounds
+- Autonomous idle animations so he feels alive
+- Swipe **up from the bottom** to open the menu (shape presets + color presets)
+- Settings remembered after power-off
 
 ## Get the firmware
-1. Open the **Actions** tab, then the latest "Build Charlie Eyes" run (on the `charlie-v1` branch or after it builds).
-2. Download the **charlie-eyes-firmware** artifact and unzip it.
-3. `charlie-full.bin` is the single file to flash (at address 0x0).
-
-## Flash from the browser (Chrome or Edge)
-1. Plug the board in over USB (hold BOOT while plugging in if it isn't detected).
-2. Open https://web.esphome.io, click **Connect**, pick the port, then **Install** and choose `charlie-full.bin`.
+1. Open the **Actions** tab → latest successful "Build Charlie Eyes" run.
+2. Download the **charlie-eyes-firmware** artifact.
+3. Flash `charlie-full.bin` (at 0x0) via https://web.esphome.io or esptool.
 
 ## Interactions
-- **Tap** the screen: happy reaction (or angry if you tap too many times in a row).
-- **Pet** by swiping back and forth: love mood + purring sounds.
-- **Shake** the device: dizzy or angry.
-- **Pick up / put down**: surprise then relief.
-- **Swipe down from the top edge**: open the menu to change eye presets or mute.
-- He gets sleepy if ignored, and can fall asleep (dim screen). Interact to wake him.
+- Tap the screen
+- Pet by swiping back and forth
+- Shake or pick him up
+- Swipe up from the bottom for the menu
 
-Serial monitor (115200):
-- `n` neutral, `h` happy, `s` sleepy, `a` angry, `d` sad, `u` surprised, `l` love, `z` sleep/wake, `m` menu, `t` test next sound.
+Serial (115200): `n h s a d u l z m` for moods/menu, etc.
 
-Settings (preset + mute) are saved and restored after power-off.
+Future: Wi-Fi hotspot + Lovable app for personality quiz presets.
