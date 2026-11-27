@@ -571,24 +571,28 @@ static void startCatch() {
 static void throwBall() {
   if (!ballOn || !ballMine) return;
   ballMine = false;
-  ballVX = 320;
+  ballVX = 220;
   pendingEvent = 1;
   lastThrowT = gNow;
   say(snd::S_HAPPY);
   playAnim(pick(HAPPY_POOL, 6), gNow);
 }
 static void receiveBall() {
-  ballOn = true; ballMine = true; ballX = 200; ballVX = -180;
+  ballOn = true; ballMine = false; ballX = 240; ballVX = -200;
+  // it rolls in from the edge then becomes ours
   playAnim(AN_HAPPY1, gNow);
+  say(snd::S_CURIOUS);
 }
 static void ballUpdate(float dt) {
   if (!ballOn) return;
   if (!ballMine) {
     ballX += ballVX * dt;
     ballY = 30 + sinf(ballX * 0.05f) * 10;
-    if (ballX > 260) ballOn = false;
+    // outgoing: left the screen
+    if (ballVX > 0 && ballX > 260) ballOn = false;
+    // incoming: arrived, claim it
+    if (ballVX < 0 && ballX < -40) { ballMine = true; ballVX = 0; }
   } else {
-    // held, gentle bounce
     ballX = -60 + sinf(gNow / 200.0f) * 12;
     ballY = 20 + sinf(gNow / 160.0f) * 8;
   }
@@ -599,7 +603,7 @@ static void playUpdate(uint32_t now) {
   if (playState == 1) {  // surprise
     if (el > 1200) { playState = 2; playT0 = now; lastChirpT = now; }
   } else if (playState == 2) {  // maniac chirp talk
-    if (now - lastChirpT > 180) { lastChirpT = now; say(snd::S_BLIP); }
+    if (now - lastChirpT > 280) { lastChirpT = now; say((now / 300) & 1 ? snd::S_CURIOUS : snd::S_THINK); }
     if (el > 2000) startCatch();
   } else if (playState == 3) {  // catch for ~60s
     if (el > 60000) { playState = 0; ballOn = false; return; }
@@ -1571,8 +1575,8 @@ static void buildScene() {
 
   // ---- shared ball (rolls off one Charlie onto the other)
   if (ballOn) {
-    cCircle(ballX, ballY, 16, Col{80, 200, 255}, 1.0f, true);
-    cCircle(ballX - 5, ballY - 5, 5, Col{200, 240, 255}, 0.8f);
+    cCircle(ballX, ballY, 28, Col{255, 182, 193}, 1.0f, true);
+    cCircle(ballX - 8, ballY - 8, 8, Col{255, 230, 235}, 0.85f);
   }
 
   // ---- particles

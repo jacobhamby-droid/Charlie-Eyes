@@ -368,7 +368,7 @@ void loop() {
   lastFrame = now;
 
   handleSerial();
-  if (now - lastBroadcast > 600) { lastBroadcast = now; broadcastMood(); }
+  if (now - lastBroadcast > (ch::pendingEvent ? 40 : 600)) { lastBroadcast = now; broadcastMood(); }
 
   ch::Input in;
   readInputs(now, in);
