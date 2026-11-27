@@ -101,6 +101,33 @@ int main(int argc, char** argv) {
     }
     gravity(0); step(300); snap("after");
     step(1500); snap("recovered");
+  } else if (sc == "pages") {
+    step(2500);
+    in.rtcOK = true; in.hh = 6; in.mm = 58; in.ss = 0;
+    // swipe right from left edge -> timer
+    in.touch = true; in.tx = 12; in.ty = 233; step(16);
+    for (int i = 0; i < 12; i++) { in.tx += 14; step(16); }
+    in.touch = false; step(900); snap("timer");
+    // tap START (0,97)
+    in.touch = true; in.tx = 233; in.ty = 233 + 97; step(80); in.touch = false; step(1200); snap("timer_running");
+    // swipe left from right edge -> alarm
+    in.touch = true; in.tx = 454; in.ty = 233; step(16);
+    for (int i = 0; i < 12; i++) { in.tx -= 14; step(16); }
+    in.touch = false; step(900); snap("alarm");
+    // clock button -> set time
+    in.touch = true; in.tx = 233 - 120; in.ty = 233 + 121; step(80); in.touch = false; step(900); snap("settime");
+  } else if (sc == "ring") {
+    step(2500);
+    testRing(1);
+    for (int i = 0; i < 14; i++) { step(60); char t[8]; snprintf(t, 8, "r%02d", i); snap(t); }
+    step(1200);
+    in.touch = true; in.tx = 233; in.ty = 300; step(60); in.touch = false; step(150); snap("dismiss");
+    step(1500); snap("after");
+  } else if (sc == "mic") {
+    step(2500);
+    snd::mic.nameSeq++; step(120); snap("name1"); step(250); snap("name2"); step(900); snap("name3");
+    step(3000);
+    snd::mic.loudAmt = 0.9f; snd::mic.loudSeq++; step(100); snap("loud1"); step(200); snap("loud2"); step(1200); snap("loud3");
   } else if (sc == "bench") {
     step(1000);
     int cnt = 0, maxRows = 0; long totRows = 0;

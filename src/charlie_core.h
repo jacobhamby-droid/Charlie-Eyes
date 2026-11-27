@@ -1,9 +1,10 @@
-// Charlie core: eyes, animation, emotions, touch gestures, menu, software renderer.
+// Charlie core: eyes, animation, moods, hearing, touch gestures, menus, timer/alarm, software renderer.
 // Hardware-free on purpose (no Arduino calls) so it can be compiled and rendered on a PC.
 #pragma once
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include "charlie_sound.h"
 
 namespace ch {
 
@@ -43,6 +44,10 @@ struct Settings {
   uint8_t colorIdx = 0;
   int16_t orientOffset = 0;  // degrees, multiples of 90
   bool mirror = false;
+  uint8_t vol = 2;           // 0 mute, 1 low, 2 medium, 3 high
+  bool alarmOn = false;
+  uint8_t alarmH = 7, alarmM = 0;  // 24 h
+  uint8_t timerMin = 5;
   bool dirty = false;
 };
 static Settings settings;
@@ -52,7 +57,13 @@ struct Input {
   float ax = 0, ay = 0, az = 0;
   bool touch = false;
   float tx = 0, ty = 0;
+  bool rtcOK = false;        // clock has been set by the user
+  uint8_t hh = 0, mm = 0, ss = 0;
 };
+
+// the core asks main.cpp to write the real-time clock
+struct ClockReq { bool pending = false; uint8_t h = 0, m = 0; };
+static ClockReq clockReq;
 
 // Eye color presets. #0 (cyan) is Charlie's original color.
 static const uint8_t PRESETS[8][3] = {
@@ -66,341 +77,10 @@ static const uint8_t PRESETS[8][3] = {
   {235, 240, 255},  // white
 };
 
-// ============================================================================
-// Pose channels, steps and animations
-// ============================================================================
-enum Ch {
-  C_LX, C_LY,        // look offset (px)
-  C_W, C_H,          // size scale (both eyes)
-  C_TILT,            // degrees, + = angry (inner edge down), - = sad
-  C_BL, C_BR,        // bend (arch) left / right eye, 0..~0.7
-  C_SHEAR,           // slant
-  C_N,               // squircle exponent
-  C_HL, C_HR,        // extra height multiplier per eye
-  C_WL, C_WR,        // extra width multiplier per eye
-  C_YL, C_YR,        // extra vertical offset per eye (px)
-  C_ROLL,            // whole-face roll (deg)
-  C_GAP,             // extra spacing (px)
-  C_COUNT
-};
-static const float NEUTRAL[C_COUNT] = {0, 0, 1, 1, 0, 0, 0, 0, 4, 1, 1, 1, 1, 0, 0, 0, 0};
-static const float CH_LO[C_COUNT] = {-60, -50, 0.3f, 0.17f, -40, -0.6f, -0.6f, -0.5f, 2.6f, 0.17f, 0.17f, 0.3f, 0.3f, -40, -40, -45, -20};
-static const float CH_HI[C_COUNT] = {60, 50, 1.9f, 2.0f, 40, 0.9f, 0.9f, 0.5f, 6.0f, 2.0f, 2.0f, 1.9f, 1.9f, 40, 40, 45, 40};
-// (the table above is ordered by enum; BL/BR entries cover bend, SHEAR covers shear)
+// animation library (pose channels, steps, ~60 animations, sound map)
+#include "charlie_anims.h"
 
-struct Step {
-  float v[C_COUNT];
-  uint16_t ms;
-  Step(uint16_t m = 300) {
-    memcpy(v, NEUTRAL, sizeof(v));
-    ms = m;
-  }
-  Step& look(float x, float y) { v[C_LX] = x; v[C_LY] = y; return *this; }
-  Step& size(float w, float h) { v[C_W] = w; v[C_H] = h; return *this; }
-  Step& tilt(float d) { v[C_TILT] = d; return *this; }
-  Step& bend(float b) { v[C_BL] = b; v[C_BR] = b; return *this; }
-  Step& bends(float l, float r) { v[C_BL] = l; v[C_BR] = r; return *this; }
-  Step& shear(float s) { v[C_SHEAR] = s; return *this; }
-  Step& expo(float n) { v[C_N] = n; return *this; }
-  Step& hts(float l, float r) { v[C_HL] = l; v[C_HR] = r; return *this; }
-  Step& wds(float l, float r) { v[C_WL] = l; v[C_WR] = r; return *this; }
-  Step& ys(float l, float r) { v[C_YL] = l; v[C_YR] = r; return *this; }
-  Step& roll(float d) { v[C_ROLL] = d; return *this; }
-  Step& gap(float g) { v[C_GAP] = g; return *this; }
-};
-
-enum Fx { FX_NONE = 0, FX_HEARTS = 1, FX_STARS = 2 };
-
-static const int MAX_STEPS = 16;
-struct Anim {
-  const char* name = "";
-  Step s[MAX_STEPS];
-  uint8_t n = 0;
-  float k = 260, z = 0.55f;  // spring stiffness / damping ratio for this animation
-  uint8_t pri = 1;           // higher interrupts lower
-  uint8_t fx = FX_NONE;
-  bool loop = false;
-  Anim& add(const Step& st) {
-    if (n < MAX_STEPS) s[n++] = st;
-    return *this;
-  }
-};
-
-enum AnimId {
-  AN_BOOT, AN_POKE_SURPRISE, AN_POKE_GIGGLE, AN_POKE_ANNOYED, AN_ANGRY, AN_SHAKE_NO, AN_NOD_YES,
-  AN_DIZZY, AN_DIZZY_RECOVER, AN_SCARED, AN_WAKE_STARTLE, AN_WAKE_NATURAL, AN_SLEEP_NOD, AN_PET_END,
-  AN_LOOK_AROUND, AN_CURIOUS, AN_THINK, AN_PEEK_SHY, AN_DOUBLE_TAKE, AN_EYE_ROLL, AN_YAWN, AN_STRETCH,
-  AN_SIGH, AN_SAD_DROOP, AN_SQUINT_SUS, AN_SMUG, AN_WIGGLE, AN_HAPPY_BOUNCE, AN_EXCITED, AN_WINK_L,
-  AN_WINK_R, AN_LOVE, AN_SNEEZE, AN_CONFUSED,
-  AN_COUNT
-};
-
-static Anim ANIMS[AN_COUNT];
-
-static Anim& def(int id, const char* name, float k, float z, uint8_t pri, uint8_t fx = FX_NONE, bool loop = false) {
-  Anim& a = ANIMS[id];
-  a.name = name; a.k = k; a.z = z; a.pri = pri; a.fx = fx; a.loop = loop; a.n = 0;
-  return a;
-}
-
-static void buildAnims() {
-  // ---- boot: wake up and look around
-  def(AN_BOOT, "boot", 260, 0.55f, 5)
-    .add(Step(500).size(1.05f, 0.05f))
-    .add(Step(170).size(0.88f, 1.38f).look(0, -8))
-    .add(Step(150).size(1.1f, 0.88f))
-    .add(Step(260))
-    .add(Step(260).look(-26, 0))
-    .add(Step(300).look(26, -4))
-    .add(Step(300));
-
-  // ---- reactions
-  def(AN_POKE_SURPRISE, "poke_surprise", 420, 0.42f, 3)
-    .add(Step(75).size(0.78f, 1.38f).look(0, -8))
-    .add(Step(130).size(1.12f, 0.85f))
-    .add(Step(190).size(0.94f, 1.1f))
-    .add(Step(450));
-
-  {
-    Anim& a = def(AN_POKE_GIGGLE, "poke_giggle", 380, 0.5f, 3);
-    for (int i = 0; i < 3; i++) {
-      a.add(Step(95).size(1.1f, 0.7f).bend(0.5f).look(0, 7));
-      a.add(Step(95).size(0.94f, 1.12f).bend(0.32f).look(0, -11));
-    }
-    a.add(Step(200).size(1.05f, 0.85f).bend(0.4f));
-    a.add(Step(350));
-  }
-
-  def(AN_POKE_ANNOYED, "poke_annoyed", 300, 0.7f, 3)
-    .add(Step(140).size(1.05f, 0.62f).tilt(14).look(-26, 3))
-    .add(Step(450).size(1.05f, 0.62f).tilt(14).look(-26, 3))
-    .add(Step(260).size(1.03f, 0.72f).tilt(10).look(0, 2))
-    .add(Step(300).size(1, 0.9f).tilt(4));
-
-  {
-    Anim& a = def(AN_ANGRY, "angry", 340, 0.6f, 3);
-    a.add(Step(150).size(1.08f, 0.58f).tilt(22).look(0, 3));
-    for (int i = 0; i < 5; i++) a.add(Step(55).size(1.08f, 0.58f).tilt(22).look((i & 1) ? -3.5f : 3.5f, 3));
-    a.add(Step(500).size(1.04f, 0.7f).tilt(16).look(0, 2));
-    a.add(Step(300).size(1, 0.9f).tilt(6));
-  }
-
-  def(AN_SHAKE_NO, "shake_no", 380, 0.6f, 3)
-    .add(Step(130).look(-30, 0).tilt(10).size(1, 0.78f))
-    .add(Step(130).look(30, 0).tilt(10).size(1, 0.78f))
-    .add(Step(130).look(-30, 0).tilt(10).size(1, 0.78f))
-    .add(Step(130).look(30, 0).tilt(10).size(1, 0.78f))
-    .add(Step(220).tilt(6).size(1, 0.88f))
-    .add(Step(250));
-
-  def(AN_NOD_YES, "nod_yes", 380, 0.55f, 2)
-    .add(Step(150).look(0, 12).size(1, 0.82f))
-    .add(Step(150).look(0, -8).size(1, 1.12f))
-    .add(Step(150).look(0, 12).size(1, 0.82f))
-    .add(Step(150).look(0, -6).size(1, 1.08f))
-    .add(Step(300));
-
-  {
-    Anim& a = def(AN_DIZZY, "dizzy", 150, 0.6f, 4, FX_STARS, true);
-    for (int i = 0; i < 8; i++) {
-      float ang = i * 45.0f * DEG;
-      a.add(Step(165).look(cosf(ang) * 20, sinf(ang) * 20)
-                .hts((i & 1) ? 1.25f : 0.72f, (i & 1) ? 0.72f : 1.25f)
-                .roll((i & 1) ? 9 : -9).size(1, 0.95f));
-    }
-  }
-
-  def(AN_DIZZY_RECOVER, "dizzy_recover", 200, 0.7f, 3)
-    .add(Step(400).size(0.92f, 0.55f).tilt(-6).look(0, 8))
-    .add(Step(350).size(1, 0.8f).look(-10, 4))
-    .add(Step(400));
-
-  {
-    Anim& a = def(AN_SCARED, "scared", 480, 0.4f, 4);
-    a.add(Step(80).size(0.7f, 1.4f).gap(10).look(0, -5));
-    for (int i = 0; i < 6; i++) a.add(Step(50).size(0.7f, 1.4f).gap(10).look((i & 1) ? -2.5f : 2.5f, -5));
-    a.add(Step(450).size(0.74f, 1.3f).gap(8).look(0, -3));
-    a.add(Step(400).size(0.95f, 1.1f).gap(3));
-  }
-
-  def(AN_WAKE_STARTLE, "wake_startle", 400, 0.45f, 5)
-    .add(Step(90).size(0.78f, 1.4f).look(0, -10))
-    .add(Step(150).size(1.1f, 0.8f).tilt(8))
-    .add(Step(500).size(1.04f, 0.8f).tilt(10).look(0, 2))
-    .add(Step(350).size(1, 1).tilt(2));
-
-  def(AN_WAKE_NATURAL, "wake_natural", 170, 0.8f, 4)
-    .add(Step(700).size(1.05f, 0.25f).bend(0.3f))
-    .add(Step(350).size(1.0f, 0.45f).bend(0.15f))
-    .add(Step(400).size(1, 0.85f))
-    .add(Step(300).look(-20, -8))
-    .add(Step(350));
-
-  def(AN_SLEEP_NOD, "sleep_nod", 120, 0.9f, 4)
-    .add(Step(450).size(1, 0.7f).look(0, 6))
-    .add(Step(550).size(1, 0.34f).look(0, 10))
-    .add(Step(300).size(1, 0.65f))
-    .add(Step(550).size(1, 0.3f).look(0, 10))
-    .add(Step(700).size(1.04f, 0.1f).bend(0.05f).look(0, 12));
-
-  def(AN_PET_END, "pet_end", 260, 0.55f, 3)
-    .add(Step(220).size(1.1f, 0.8f).bend(0.5f))
-    .add(Step(260).size(0.96f, 1.12f).bend(0.1f).look(0, -5))
-    .add(Step(380).size(1.03f, 0.9f).bend(0.3f))
-    .add(Step(300));
-
-  // ---- autonomous / idle
-  def(AN_LOOK_AROUND, "look_around", 200, 0.75f, 1)
-    .add(Step(250).look(-34, -4))
-    .add(Step(500).look(-34, -4))
-    .add(Step(220).look(34, -4))
-    .add(Step(600).look(34, -4))
-    .add(Step(220).look(0, -26))
-    .add(Step(450).look(0, -26))
-    .add(Step(250));
-
-  def(AN_CURIOUS, "curious", 220, 0.7f, 1)
-    .add(Step(300).roll(8).hts(1.15f, 0.86f).look(22, -4))
-    .add(Step(1000).roll(8).hts(1.15f, 0.86f).look(22, -4))
-    .add(Step(260).roll(-6).hts(0.9f, 1.12f).look(-22, -4))
-    .add(Step(900).roll(-6).hts(0.9f, 1.12f).look(-22, -4))
-    .add(Step(320));
-
-  def(AN_THINK, "think", 200, 0.75f, 1)
-    .add(Step(320).look(-26, -22).size(1, 0.92f).hts(0.78f, 1.1f).tilt(5))
-    .add(Step(950).look(-26, -22).size(1, 0.92f).hts(0.78f, 1.1f).tilt(5))
-    .add(Step(220).look(-22, -26).size(1, 0.92f).hts(0.78f, 1.1f).tilt(5))
-    .add(Step(550).look(-22, -26).size(1, 0.92f).hts(0.78f, 1.1f).tilt(5))
-    .add(Step(260).size(1, 1.12f))
-    .add(Step(350));
-
-  def(AN_PEEK_SHY, "peek_shy", 220, 0.65f, 1)
-    .add(Step(220).look(32, 8).size(0.82f, 0.82f).tilt(-7))
-    .add(Step(800).look(32, 8).size(0.82f, 0.82f).tilt(-7))
-    .add(Step(170))
-    .add(Step(150))
-    .add(Step(210).look(34, 8).size(0.8f, 0.8f).tilt(-7))
-    .add(Step(600).look(34, 8).size(0.8f, 0.8f).tilt(-7))
-    .add(Step(320));
-
-  def(AN_DOUBLE_TAKE, "double_take", 340, 0.55f, 1)
-    .add(Step(300).look(26, 0))
-    .add(Step(280).look(26, 0))
-    .add(Step(130))
-    .add(Step(80).size(0.8f, 1.36f).look(0, -4))
-    .add(Step(320).size(0.8f, 1.36f).look(0, -4))
-    .add(Step(320));
-
-  {
-    Anim& a = def(AN_EYE_ROLL, "eye_roll", 220, 0.7f, 1);
-    for (int i = 0; i < 8; i++) {
-      float ang = (-90.0f + i * 45.0f) * DEG;
-      a.add(Step(125).look(cosf(ang) * 28, sinf(ang) * 28).size(1, 0.92f));
-    }
-    a.add(Step(220).size(1, 0.85f).tilt(-4));
-    a.add(Step(300));
-  }
-
-  def(AN_YAWN, "yawn", 170, 0.8f, 1)
-    .add(Step(500).size(0.96f, 0.72f).bend(0.1f).tilt(-4).look(0, 2))
-    .add(Step(550).size(1.04f, 0.26f).bend(0.38f).look(0, -6))
-    .add(Step(550).size(1.04f, 0.26f).bend(0.38f).look(0, -6))
-    .add(Step(420).size(1, 0.6f).look(0, 4))
-    .add(Step(320));
-
-  def(AN_STRETCH, "stretch", 200, 0.65f, 1)
-    .add(Step(300).size(0.86f, 1.26f).look(0, -14))
-    .add(Step(520).size(0.84f, 1.3f).look(0, -18))
-    .add(Step(200).size(1.16f, 0.8f).look(0, 6))
-    .add(Step(400));
-
-  def(AN_SIGH, "sigh", 170, 0.8f, 1)
-    .add(Step(600).size(1.03f, 0.92f).look(0, -6))
-    .add(Step(550).size(0.98f, 0.74f).tilt(-5).look(0, 10))
-    .add(Step(500));
-
-  def(AN_SAD_DROOP, "sad_droop", 160, 0.8f, 1)
-    .add(Step(500).size(0.95f, 0.82f).tilt(-15).look(0, 12))
-    .add(Step(1400).size(0.95f, 0.82f).tilt(-15).look(0, 12))
-    .add(Step(420).size(0.95f, 0.82f).tilt(-15).look(-10, 14))
-    .add(Step(850).size(0.95f, 0.82f).tilt(-15).look(10, 14))
-    .add(Step(450));
-
-  def(AN_SQUINT_SUS, "squint_suspicious", 240, 0.75f, 1)
-    .add(Step(320).size(1.06f, 0.46f).tilt(10).look(-20, 0))
-    .add(Step(900).size(1.06f, 0.46f).tilt(10).look(-20, 0))
-    .add(Step(260).size(1.06f, 0.46f).tilt(10).look(20, 0))
-    .add(Step(650).size(1.06f, 0.46f).tilt(10).look(20, 0))
-    .add(Step(300));
-
-  def(AN_SMUG, "smug", 200, 0.8f, 1)
-    .add(Step(350).size(1.05f, 0.62f).bend(0.28f).tilt(-3).look(0, -4))
-    .add(Step(1300).size(1.05f, 0.62f).bend(0.28f).tilt(-3).look(0, -4))
-    .add(Step(320));
-
-  {
-    Anim& a = def(AN_WIGGLE, "wiggle", 300, 0.5f, 2);
-    for (int i = 0; i < 6; i++) a.add(Step(125).roll((i & 1) ? -11 : 11).bend(0.42f).size(1.06f, 0.8f));
-    a.add(Step(260).size(1.04f, 0.9f).bend(0.3f));
-    a.add(Step(300));
-  }
-
-  def(AN_HAPPY_BOUNCE, "happy_bounce", 360, 0.5f, 2)
-    .add(Step(140).size(1.12f, 0.7f).bend(0.3f).look(0, 8))
-    .add(Step(130).size(0.88f, 1.25f).look(0, -16).bend(0.1f))
-    .add(Step(130).size(1.1f, 0.75f).look(0, 8).bend(0.3f))
-    .add(Step(130).size(0.9f, 1.2f).look(0, -12))
-    .add(Step(250).size(1.05f, 0.9f).bend(0.3f))
-    .add(Step(300));
-
-  {
-    Anim& a = def(AN_EXCITED, "excited", 450, 0.4f, 2);
-    a.add(Step(120).size(1.15f, 1.25f).gap(8));
-    for (int i = 0; i < 6; i++) a.add(Step(70).size(1.15f, 1.25f).gap(8).look((i & 1) ? -2.5f : 2.5f, -2));
-    a.add(Step(130).size(1.12f, 0.75f).bend(0.3f).look(0, 8));
-    a.add(Step(130).size(0.9f, 1.25f).look(0, -16));
-    a.add(Step(200).size(1.05f, 0.9f));
-    a.add(Step(300));
-  }
-
-  def(AN_WINK_L, "wink_left", 420, 0.55f, 2)
-    .add(Step(120).hts(0.1f, 1.05f).bends(0.38f, 0.1f).wds(1.12f, 1.0f))
-    .add(Step(500).hts(0.1f, 1.05f).bends(0.38f, 0.1f).wds(1.12f, 1.0f))
-    .add(Step(170))
-    .add(Step(200));
-
-  def(AN_WINK_R, "wink_right", 420, 0.55f, 2)
-    .add(Step(120).hts(1.05f, 0.1f).bends(0.1f, 0.38f).wds(1.0f, 1.12f))
-    .add(Step(500).hts(1.05f, 0.1f).bends(0.1f, 0.38f).wds(1.0f, 1.12f))
-    .add(Step(170))
-    .add(Step(200));
-
-  {
-    Anim& a = def(AN_LOVE, "love", 300, 0.5f, 3, FX_HEARTS);
-    a.add(Step(300).size(1.1f, 0.9f).bend(0.45f));
-    for (int i = 0; i < 3; i++) {
-      a.add(Step(140).size(1.2f, 0.82f).bend(0.55f));
-      a.add(Step(160).size(1.08f, 0.92f).bend(0.45f));
-    }
-    a.add(Step(400).size(1.05f, 0.9f).bend(0.35f));
-    a.add(Step(300));
-  }
-
-  def(AN_SNEEZE, "sneeze", 380, 0.4f, 2)
-    .add(Step(260).size(0.96f, 0.82f).look(0, -6))
-    .add(Step(300).size(0.92f, 0.6f).look(0, -14))
-    .add(Step(150).size(1.1f, 0.1f).bend(0.3f).look(0, 10))
-    .add(Step(90).size(0.74f, 1.42f).look(0, -12))
-    .add(Step(140).size(1.15f, 0.84f))
-    .add(Step(320));
-
-  def(AN_CONFUSED, "confused", 240, 0.7f, 1)
-    .add(Step(260).hts(1.3f, 0.76f).roll(6).shear(0.1f))
-    .add(Step(750).hts(1.3f, 0.76f).roll(6).shear(0.1f))
-    .add(Step(300).hts(0.8f, 1.22f).roll(-6).shear(-0.1f).look(8, -4))
-    .add(Step(750).hts(0.8f, 1.22f).roll(-6).shear(-0.1f).look(8, -4))
-    .add(Step(320));
-}
+static inline void say(int id) { snd::play((snd::Id)id); }
 
 // ============================================================================
 // Spring-driven pose
@@ -436,6 +116,7 @@ static void physics(float dt) {
 // ============================================================================
 struct Mind {
   float joy = 0.62f, energy = 1.0f, annoy = 0.0f, love = 0.15f, bored = 0.0f, dizzy = 0.0f;
+  float fear = 0.0f, alert = 0.0f;
 };
 static Mind mind;
 static uint32_t gNow = 0;
@@ -449,14 +130,16 @@ static uint32_t sleepStart = 0;
 struct Player { bool active = false; int id = -1; int idx = 0; uint32_t stepEnd = 0; uint32_t loopUntil = 0; };
 static Player cur;
 static bool dizzyFx = false;
+static int pendingAnim = -1;
 
 struct Part {
   bool on; uint8_t type; float x, y, vx, vy, rot, vr, size, life, max, phase, orbit;
 };
-static Part parts[14];
+static const int NPARTS = 24;
+static Part parts[NPARTS];
 
 static Part* allocPart() {
-  for (int i = 0; i < 14; i++) if (!parts[i].on) return &parts[i];
+  for (int i = 0; i < NPARTS; i++) if (!parts[i].on) return &parts[i];
   return nullptr;
 }
 static void spawnHeart() {
@@ -488,12 +171,25 @@ static void spawnStars() {
     *p = q;
   }
 }
+// little "ring ring" lines that fly off a struck bell (upright coordinates, relative to the center)
+static void spawnRingMark(float rx, float ry, float angDeg) {
+  Part* p = allocPart();
+  if (!p) return;
+  Part q; memset(&q, 0, sizeof(q));
+  q.on = true; q.type = 3;
+  q.x = CXF + rx; q.y = CYF + ry;
+  q.rot = angDeg * DEG;
+  q.vx = cosf(q.rot) * 190; q.vy = sinf(q.rot) * 190;
+  q.size = 15; q.max = 0.30f;
+  *p = q;
+}
 
 static bool playAnim(int id, uint32_t now, uint32_t loopUntil = 0) {
   const Anim& A = ANIMS[id];
   if (cur.active && A.pri < ANIMS[cur.id].pri) return false;
   cur.active = true; cur.id = id; cur.idx = 0;
   cur.stepEnd = now + A.s[0].ms; cur.loopUntil = loopUntil;
+  if (A.snd) say(A.snd);
   if (A.fx == FX_HEARTS) for (int i = 0; i < 4; i++) spawnHeart();
   if (A.fx == FX_STARS) { dizzyFx = true; spawnStars(); }
   return true;
@@ -584,19 +280,177 @@ static void imuUpdate(uint32_t now, float dt, float ax, float ay, float az) {
 }
 
 // ============================================================================
-// Touch gestures, menu
+// Pages (menus), timer, alarm, ringing
 // ============================================================================
-struct TouchTrack {
-  bool down; uint32_t t0, lastMove, lastRevT;
-  float sx, sy, x, y, path, exX, exY;
-  int dirX, dirY, rev;
-  bool consumed, petting;
-};
-static TouchTrack T;
+enum Page { PG_FACE = 0, PG_COLOR, PG_TIMER, PG_ALARM, PG_SETTIME };
+static int page = PG_FACE, shownPage = PG_FACE;
 static bool menuOpen = false;
 static float menuP = 0, menuV = 0;
 static uint32_t menuT0 = 0;
-static uint32_t lastHeartT = 0;
+
+static void setPage(int p, uint32_t now) {
+  page = p;
+  menuOpen = (p != PG_FACE);
+  if (menuOpen) { shownPage = p; cur.active = false; }
+  menuT0 = now;
+}
+static void closeMenu() { page = PG_FACE; menuOpen = false; }
+
+// timer
+static bool timerRun = false;
+static uint32_t timerEnd = 0, timerLen = 0;
+// clock (mirrors the RTC)
+static int curHH = 12, curMM = 0, curSS = 0;
+static bool rtcTrusted = false;
+static int lastAlarmKey = -1;
+static int setH = 7, setM = 0;
+
+// ringing: a hammer swings between his eyes and strikes them like the bells of a classic alarm clock
+static bool ringing = false;
+static int ringKind = 0;  // 0 timer, 1 alarm
+static uint32_t ringT0 = 0;
+static int ringHalf = -1;
+static float hammerAng = 0, hammerVis = 0;
+static float ringJit[2] = {0, 0};
+static uint32_t ringHitT[2] = {0, 0};
+static const float HAMMER_A = 36.0f;  // swing angle (deg)
+static const float HAMMER_HALF = 0.12f, RING_BURST = 1.44f, RING_CYCLE = 2.3f;
+
+static void ringHit(int side, uint32_t now) {
+  ringHitT[side] = now;
+  sp[C_HL + side].v -= 7.0f;
+  sp[C_WL + side].v += 3.0f;
+  sp[C_YL + side].v += 75.0f;
+  say(side == 0 ? snd::S_BELL_L : snd::S_BELL_R);
+  float sx = side == 0 ? -1.0f : 1.0f;
+  float hx = sx * 66.0f, hy = -128.0f + 91.0f;  // where the hammer head lands
+  spawnRingMark(hx, hy - 6, side == 0 ? -150.0f : -30.0f);
+  spawnRingMark(hx, hy - 6, -90.0f + sx * 18.0f);
+  spawnRingMark(hx, hy - 6, side == 0 ? -200.0f : 20.0f);
+}
+
+static void startRing(int kind, uint32_t now) {
+  ringing = true; ringKind = kind; ringT0 = now; ringHalf = -1;
+  sleeping = false; fallingAsleep = false;
+  mind.energy = fmaxf(mind.energy, 0.6f);
+  pendingAnim = -1; dizzyFx = false;
+  cur.active = false;
+  closeMenu();
+  lastInteract = now;
+}
+
+static void stopRing(uint32_t now, bool byUser) {
+  ringing = false;
+  lastInteract = now;
+  cur.active = false;
+  mind.joy = clampf(mind.joy + (byUser ? 0.0f : -0.1f), 0, 1);
+  playAnim(byUser ? AN_RELIEF : AN_SIGH, now);
+}
+
+static void ringUpdate(uint32_t now, float dt) {
+  if (ringing) {
+    float t = (now - ringT0) / 1000.0f;
+    float tc = fmodf(t, RING_CYCLE);
+    float target = 0;
+    if (tc < RING_BURST) {
+      float u = tc / HAMMER_HALF;
+      target = -HAMMER_A * cosf(PI_F * u);
+      int k = (int)floorf(u);
+      int gk = (int)floorf(t / RING_CYCLE) * 100 + k;
+      if (gk != ringHalf) { ringHalf = gk; ringHit(k & 1, now); }
+    }
+    hammerAng += (target - hammerAng) * clampf(dt * 28.0f, 0, 1);
+    if (t > 75.0f) stopRing(now, false);
+  } else {
+    hammerAng += (0 - hammerAng) * clampf(dt * 10.0f, 0, 1);
+  }
+  hammerVis += ((ringing ? 1.0f : 0.0f) - hammerVis) * clampf(dt * 9.0f, 0, 1);
+  for (int s = 0; s < 2; s++) {
+    float tt = (now - ringHitT[s]) / 1000.0f;
+    ringJit[s] = (ringHitT[s] != 0 && tt < 0.4f) ? 4.5f * expf(-tt / 0.09f) * sinf(2 * PI_F * 34.0f * tt) : 0.0f;
+  }
+}
+
+static void clockUpdate(uint32_t now, const Input& in) {
+  curHH = in.hh; curMM = in.mm; curSS = in.ss;
+  rtcTrusted = in.rtcOK;
+  if (timerRun && (int32_t)(now - timerEnd) >= 0) {
+    timerRun = false;
+    startRing(0, now);
+  }
+  if (rtcTrusted && !ringing) {
+    int key = curHH * 60 + curMM;
+    int alarmKey = settings.alarmH * 60 + settings.alarmM;
+    if (key != alarmKey) lastAlarmKey = -1;
+    if (settings.alarmOn && key == alarmKey && lastAlarmKey != key) {
+      lastAlarmKey = key;
+      startRing(1, now);
+    }
+  }
+}
+
+// ============================================================================
+// Hearing: what he does when the mic notices something
+// ============================================================================
+static uint32_t micLoudSeen = 0, micVoiceSeen = 0, micNameSeen = 0;
+static uint32_t nameCool = 0, voiceCool = 0, listenCool = 0;
+
+static void wakeUp(uint32_t now, bool startled);
+
+static void onLoud(uint32_t now, float amt) {
+  if (ringing || menuOpen) return;
+  lastInteract = now;
+  mind.fear = clampf(mind.fear + 0.3f + 0.5f * amt, 0, 1);
+  mind.alert = 1.0f;
+  mind.annoy = clampf(mind.annoy + 0.04f, 0, 1);
+  if (sleeping) { wakeUp(now, true); return; }
+  cur.active = false; pendingAnim = -1;
+  if (amt > 0.45f) playAnim(AN_STARTLE_LOUD, now);
+  else playAnim(AN_FLINCH, now);
+}
+
+static void onName(uint32_t now) {
+  if (ringing || menuOpen || now < nameCool) return;
+  nameCool = now + 2500;
+  lastInteract = now;
+  mind.alert = 1.0f;
+  mind.joy = clampf(mind.joy + 0.06f, 0, 1);
+  mind.bored = 0;
+  mind.energy = fmaxf(mind.energy, 0.55f);
+  sleeping = false; fallingAsleep = false;
+  cur.active = false;
+  playAnim(AN_PERK_UP, now);
+  pendingAnim = (mind.joy > 0.6f && frand() < 0.6f) ? AN_HAPPY_GREET : -1;
+}
+
+static void onVoicePhrase(uint32_t now) {
+  if (ringing || menuOpen || sleeping || now < voiceCool) return;
+  voiceCool = now + 9000;
+  lastInteract = now;
+  mind.alert = fmaxf(mind.alert, 0.6f);
+  if (!cur.active && frand() < 0.6f) playAnim(AN_CURIOUS, now);  // "hm?" reply
+}
+
+static void micPoll(uint32_t now) {
+  uint32_t l = snd::mic.loudSeq, v = snd::mic.voiceSeq, n = snd::mic.nameSeq;
+  if (l != micLoudSeen) { micLoudSeen = l; onLoud(now, snd::mic.loudAmt); }
+  if (n != micNameSeen) { micNameSeen = n; onName(now); }
+  if (v != micVoiceSeen) { micVoiceSeen = v; onVoicePhrase(now); }
+}
+
+// ============================================================================
+// Touch gestures
+// ============================================================================
+enum Btn { B_NONE = 0, B_MINUS, B_PLUS, B_START, B_DIGITS, B_HUP, B_HDN, B_MUP, B_MDN, B_TOGGLE, B_CLOCK, B_CHECK, B_VOL };
+
+struct TouchTrack {
+  bool down; uint32_t t0, lastMove, lastRevT, repeatT;
+  float sx, sy, x, y, path, exX, exY;
+  int dirX, dirY, rev, btn;
+  bool consumed, petting;
+};
+static TouchTrack T;
+static uint32_t lastHeartT = 0, lastPurrT = 0;
 static uint32_t lastPokeT = 0;
 static int pokeStreak = 0;
 static uint32_t lookAtUntil = 0;
@@ -621,6 +475,7 @@ static void wakeUp(uint32_t now, bool startled) {
 }
 
 static void onShakeStart(uint32_t now) {
+  if (ringing) return;
   lastInteract = now;
   if (sleeping) { sleeping = false; fallingAsleep = false; mind.energy = fmaxf(mind.energy, 0.5f); }
   cur.active = false;
@@ -628,6 +483,7 @@ static void onShakeStart(uint32_t now) {
   playAnim(AN_DIZZY, now, now + 900);
 }
 static void onShakeEnd(uint32_t now) {
+  if (ringing) return;
   lastInteract = now;
   mind.annoy = clampf(mind.annoy + 0.2f, 0, 1);
   mind.joy = clampf(mind.joy - 0.12f, 0, 1);
@@ -636,16 +492,19 @@ static void onShakeEnd(uint32_t now) {
   playAnim(AN_DIZZY_RECOVER, now);
 }
 static void onFall(uint32_t now) {
+  if (ringing) return;
   lastInteract = now;
   if (sleeping) { sleeping = false; fallingAsleep = false; }
   cur.active = false;
   mind.annoy = clampf(mind.annoy + 0.1f, 0, 1);
+  mind.fear = clampf(mind.fear + 0.6f, 0, 1);
   playAnim(AN_SCARED, now);
 }
 
 static void onPoke(uint32_t now, float ux, float uy) {
   lastInteract = now;
   mind.energy = fminf(1.0f, mind.energy + 0.03f);
+  mind.alert = fmaxf(mind.alert, 0.5f);
   if (now - lastPokeT < 2200) pokeStreak++; else pokeStreak = 1;
   lastPokeT = now;
   lookAtUntil = now + 900;
@@ -658,31 +517,101 @@ static void onPoke(uint32_t now, float ux, float uy) {
     playAnim(AN_ANGRY, now);
   } else if (pokeStreak >= 3) {
     mind.annoy = clampf(mind.annoy + 0.15f, 0, 1);
-    playAnim((rnd() & 1) ? AN_SHAKE_NO : AN_POKE_ANNOYED, now);
+    float r = frand();
+    playAnim(r < 0.4f ? AN_SHAKE_NO : (r < 0.7f ? AN_POKE_ANNOYED : AN_POKE_OW), now);
   } else if (mind.annoy > 0.45f) {
     mind.annoy = clampf(mind.annoy + 0.05f, 0, 1);
-    playAnim(AN_POKE_ANNOYED, now);
+    playAnim(frand() < 0.5f ? AN_POKE_ANNOYED : AN_POKE_OW, now);
   } else {
     mind.joy = clampf(mind.joy + 0.04f, 0, 1);
-    if (pokeStreak == 2 && mind.joy > 0.5f) playAnim(AN_POKE_GIGGLE, now);
+    float r = frand();
+    if (pokeStreak == 2 && mind.joy > 0.5f) playAnim(r < 0.5f ? AN_POKE_GIGGLE : AN_POKE_TICKLE, now);
+    else if (mind.joy > 0.7f && r < 0.4f) playAnim(AN_POKE_PLAYFUL, now);
+    else if (r < 0.15f) playAnim(AN_POKE_OW, now);
     else playAnim(AN_POKE_SURPRISE, now);
   }
 }
 
-static void onPetStart(uint32_t now) { petStart = now; lastHeartT = now; lastInteract = now; }
+static void onPetStart(uint32_t now) { petStart = now; lastHeartT = now; lastInteract = now; lastPurrT = now; }
 static void onPetEnd(uint32_t now) {
   lastInteract = now;
   if (now - petStart > 900) {
-    if (mind.love > 0.55f) playAnim(AN_LOVE, now);
+    if (mind.love > 0.55f) playAnim(frand() < 0.5f ? AN_LOVE : AN_NUZZLE, now);
     else playAnim(AN_PET_END, now);
   }
 }
 
-static void openMenu(uint32_t now) { menuOpen = true; menuT0 = now; cur.active = false; }
-static void closeMenu() { menuOpen = false; }
+static void orientStep();
 
-static bool menuHit(float ux, float uy) {
-  // returns true if a swatch was chosen
+// ---- buttons ---------------------------------------------------------------
+struct BtnDef { int id; float x, y, r; };
+
+static int btnAt(int pg, float ux, float uy) {
+  static const BtnDef TIM[] = {{B_START, 0, 97, 56}, {B_MINUS, -112, 97, 44}, {B_PLUS, 112, 97, 44}};
+  static const BtnDef ALM[] = {{B_HUP, -71, -87, 36}, {B_HDN, -71, 50, 36}, {B_MUP, 71, -87, 36}, {B_MDN, 71, 50, 36},
+                               {B_TOGGLE, 0, 121, 48}, {B_CLOCK, -120, 121, 34}};
+  static const BtnDef SET[] = {{B_HUP, -71, -87, 36}, {B_HDN, -71, 50, 36}, {B_MUP, 71, -87, 36}, {B_MDN, 71, 50, 36},
+                               {B_CHECK, 0, 121, 48}};
+  const BtnDef* L = nullptr; int n = 0;
+  if (pg == PG_TIMER) { L = TIM; n = 3; }
+  else if (pg == PG_ALARM) { L = ALM; n = 6; }
+  else if (pg == PG_SETTIME) { L = SET; n = 5; }
+  for (int i = 0; i < n; i++)
+    if (hypotf(ux - L[i].x, uy - L[i].y) < L[i].r) return L[i].id;
+  if (pg == PG_TIMER && !timerRun && fabsf(ux) < 130 && fabsf(uy + 18) < 56) return B_DIGITS;
+  return B_NONE;
+}
+static bool isRepeat(int b) { return b == B_MINUS || b == B_PLUS || b == B_HUP || b == B_HDN || b == B_MUP || b == B_MDN; }
+
+static void doBtn(int b, uint32_t now, bool held) {
+  menuT0 = now;
+  if (page == PG_TIMER) {
+    int m = settings.timerMin;
+    if (b == B_PLUS) { m += (m < 10) ? 1 : 5; if (m > 99) m = 99; settings.timerMin = m; settings.dirty = true; say(snd::S_UP); }
+    else if (b == B_MINUS) { m -= (m <= 10) ? 1 : 5; if (m < 1) m = 1; settings.timerMin = m; settings.dirty = true; say(snd::S_DOWN); }
+    else if (b == B_DIGITS) {
+      static const uint8_t PRE[] = {1, 3, 5, 10, 15, 20, 30, 45, 60};
+      int nx = PRE[0];
+      for (unsigned i = 0; i < sizeof(PRE); i++) if (PRE[i] > m) { nx = PRE[i]; break; }
+      settings.timerMin = nx; settings.dirty = true; say(snd::S_TAP);
+    } else if (b == B_START) {
+      if (timerRun) { timerRun = false; closeMenu(); playAnim(AN_CANCEL, now); }
+      else {
+        timerRun = true; timerLen = (uint32_t)settings.timerMin * 60000u; timerEnd = now + timerLen;
+        closeMenu(); cur.active = false; playAnim(AN_TIMER_START, now);
+      }
+    }
+  } else if (page == PG_ALARM || page == PG_SETTIME) {
+    bool set = (page == PG_SETTIME);
+    int h = set ? setH : settings.alarmH, m = set ? setM : settings.alarmM;
+    if (b == B_HUP) { h = (h + 1) % 24; say(snd::S_UP); }
+    else if (b == B_HDN) { h = (h + 23) % 24; say(snd::S_DOWN); }
+    else if (b == B_MUP) { m = (m + 1) % 60; say(snd::S_UP); }
+    else if (b == B_MDN) { m = (m + 59) % 60; say(snd::S_DOWN); }
+    if (set) { setH = h; setM = m; }
+    else if (b == B_HUP || b == B_HDN || b == B_MUP || b == B_MDN) { settings.alarmH = h; settings.alarmM = m; settings.dirty = true; }
+    if (b == B_TOGGLE) {
+      settings.alarmOn = !settings.alarmOn; settings.dirty = true; lastAlarmKey = -1;
+      if (settings.alarmOn) { closeMenu(); playAnim(AN_ALARM_SET, now); }
+      else { say(snd::S_CANCEL); }
+    } else if (b == B_CLOCK) {
+      setH = curHH; setM = curMM; setPage(PG_SETTIME, now); say(snd::S_TAP);
+    } else if (b == B_CHECK) {
+      clockReq.pending = true; clockReq.h = setH; clockReq.m = setM;
+      rtcTrusted = true;
+      setPage(PG_ALARM, now); say(snd::S_CONFIRM);
+    }
+  }
+  (void)held;
+}
+
+static bool menuHit(float ux, float uy) {  // color page: returns true if something was chosen
+  if (hypotf(ux, uy - 80) < 42) {
+    settings.vol = (settings.vol + 1) & 3; settings.dirty = true;
+    snd::setVolume(settings.vol);
+    say(snd::S_CONFIRM);
+    return true;
+  }
   for (int k = 0; k < 8; k++) {
     float ang = k * 45.0f * DEG;
     float cx = MENU_RING * sinf(ang), cy = -MENU_RING * cosf(ang);
@@ -707,51 +636,76 @@ static void axisTrack(float p, float& ex, int& dir, int& rev, uint32_t now, uint
   }
 }
 
-static void orientStep();
-
 static void touchUpdate(uint32_t now, bool down, float rx, float ry) {
   float ux = 0, uy = 0;
   if (down) toUpright(rx, ry, ux, uy);
 
-  if (down && !T.down) {  // finger down
+  if (down && !T.down) {  // ---- finger down
     memset(&T, 0, sizeof(T));
     T.down = true; T.t0 = now; T.lastMove = now;
     T.sx = T.x = ux; T.sy = T.y = uy; T.exX = ux; T.exY = uy;
     lastInteract = now;
-    if (sleeping && !menuOpen) { wakeUp(now, true); T.consumed = true; }
-  } else if (down && T.down) {  // finger moving
+    if (ringing) {
+      if (now - ringT0 > 500) stopRing(now, true);
+      T.consumed = true;
+    } else if (sleeping && !menuOpen) {
+      wakeUp(now, true); T.consumed = true;
+    } else if (menuOpen) {
+      menuT0 = now;
+      if (page != PG_COLOR) {
+        T.btn = btnAt(page, ux, uy);
+        if (T.btn && isRepeat(T.btn)) { doBtn(T.btn, now, false); T.repeatT = now + 450; }
+      }
+    }
+  } else if (down && T.down) {  // ---- finger moving
     float d = hypotf(ux - T.x, uy - T.y);
     if (d > 1.5f) T.lastMove = now;
     T.path += d; T.x = ux; T.y = uy;
     axisTrack(ux, T.exX, T.dirX, T.rev, now, T.lastRevT);
     axisTrack(uy, T.exY, T.dirY, T.rev, now, T.lastRevT);
     lastInteract = now;
+    if (menuOpen) menuT0 = now;
 
-    // hold the middle of the open menu for ~1.2 s: turn Charlie's 'up' by 90 degrees
-    // (fixes the orientation by touch if the sensor axes are mapped differently)
-    if (!T.consumed && menuOpen && now - T.t0 > 1200 && T.path < 30 && hypotf(T.x, T.y) < 70) {
+    // hold a repeating button (+/-, arrows) to keep changing the value
+    if (menuOpen && !T.consumed && T.btn && isRepeat(T.btn) && now >= T.repeatT && btnAt(page, ux, uy) == T.btn) {
+      doBtn(T.btn, now, true);
+      T.repeatT = now + ((now - T.t0) > 1800 ? 55 : 120);
+    }
+
+    // hold the middle of the color menu ~1.2 s: turn Charlie's 'up' by 90 degrees
+    if (!T.consumed && menuOpen && page == PG_COLOR && now - T.t0 > 1200 && T.path < 30 && hypotf(T.x, T.y) < 40) {
       orientStep(); T.consumed = true; menuT0 = now;
       playAnim(AN_CONFUSED, now);
     }
 
     if (!T.consumed) {
       float dy = uy - T.sy, dx = ux - T.sx;
-      if (!menuOpen && T.sy < -105 && dy > 70 && fabsf(dx) < dy * 0.9f) {
-        openMenu(now); T.consumed = true;
-      } else if (menuOpen && -dy > 70 && fabsf(dx) < -dy * 0.9f) {
-        closeMenu(); T.consumed = true;
+      bool horiz = fabsf(dy) < fabsf(dx) * 0.9f, vert = fabsf(dx) < fabsf(dy) * 0.9f;
+      if (page == PG_FACE) {
+        if (T.sy < -105 && dy > 70 && vert) { setPage(PG_COLOR, now); T.consumed = true; }
+        else if (T.sx < -105 && dx > 70 && horiz) { setPage(PG_TIMER, now); say(snd::S_UP); T.consumed = true; }
+        else if (T.sx > 105 && dx < -70 && horiz) { setPage(PG_ALARM, now); say(snd::S_UP); T.consumed = true; }
+      } else if (page == PG_COLOR) {
+        if (-dy > 70 && vert) { closeMenu(); T.consumed = true; }
+      } else if (page == PG_TIMER) {
+        if (dx < -70 && horiz) { closeMenu(); say(snd::S_DOWN); T.consumed = true; }
+      } else if (page == PG_ALARM) {
+        if (dx > 70 && horiz) { closeMenu(); say(snd::S_DOWN); T.consumed = true; }
+      } else if (page == PG_SETTIME) {
+        if (dx > 70 && horiz) { setPage(PG_ALARM, now); T.consumed = true; }
       }
     }
-  } else if (!down && T.down) {  // finger up
+  } else if (!down && T.down) {  // ---- finger up
     bool wasPet = T.petting;
     if (T.petting) { T.petting = false; onPetEnd(now); }
-    if (!T.consumed && !wasPet && (now - T.t0) < 350 && T.path < 28) {
-      if (menuOpen) {
-        menuT0 = now;
-        if (!menuHit(T.x, T.y) && hypotf(T.x, T.y) < 80) closeMenu();
-      } else {
-        onPoke(now, T.x, T.y);
-      }
+    bool shortTap = !T.consumed && !wasPet && (now - T.t0) < 350 && T.path < 28;
+    if (page == PG_FACE) {
+      if (shortTap) onPoke(now, T.x, T.y);
+    } else if (page == PG_COLOR) {
+      if (shortTap) { menuT0 = now; menuHit(T.x, T.y); }
+    } else if (!T.consumed && T.btn && !isRepeat(T.btn) && T.path < 28 && (now - T.t0) < 900 &&
+               btnAt(page, T.x, T.y) == T.btn) {
+      doBtn(T.btn, now, false);
     }
     T.down = false;
   }
@@ -771,6 +725,7 @@ static void touchUpdate(uint32_t now, bool down, float rx, float ry) {
 // Idle director + base pose
 // ============================================================================
 static uint32_t nextIdle = 4000, nextBlink = 2500, blinkT0 = 0, nextSaccade = 1500;
+static uint32_t nextBabble = 20000, nextDream = 0, nextSnore = 0;
 static float gazeX = 0, gazeY = 0;
 static bool demoMode = false;
 static int demoIdx = 0;
@@ -791,8 +746,12 @@ static void baseTarget(float* t) {
   t[C_BL] = t[C_BR] = 0.42f * hap;
   t[C_LY] = 8 * slp + 10 * sad;
   t[C_N] = 4.0f - 0.2f * hap + 0.2f * mind.annoy;
+  // alert (just heard something) and fear: taller, wide-eyed
+  t[C_H] *= 1.0f + 0.10f * mind.alert + 0.18f * mind.fear;
+  t[C_W] *= 1.0f - 0.06f * mind.fear;
+  t[C_GAP] += 6.0f * mind.fear;
   if (sleeping) {
-    t[C_H] = 0.1f; t[C_W] = 1.04f; t[C_BL] = t[C_BR] = 0.05f; t[C_LY] = 12; t[C_TILT] = 0;
+    t[C_H] = 0.17f; t[C_W] = 1.04f; t[C_BL] = t[C_BR] = 0.05f; t[C_LY] = 12; t[C_TILT] = 0; t[C_GAP] = 0;
   }
 }
 
@@ -831,6 +790,21 @@ static float weightOf(int id) {
     case AN_CONFUSED: return 0.8f;
     case AN_NOD_YES: return hap;
     case AN_SHAKE_NO: return 2 * mind.annoy;
+    // v3
+    case AN_FIDGET: return 1.0f + b;
+    case AN_SLOW_BLINK: return 0.2f + 3 * slp;
+    case AN_LONELY: return 2.5f * sad + 2 * b * (1 - hap);
+    case AN_SHY_HIDE: return 0.3f + 2 * mind.love;
+    case AN_PROUD: return 1.5f * hap;
+    case AN_SING: return 2.0f * hap * mind.energy;
+    case AN_GRUMBLE: return 3 * mind.annoy;
+    case AN_SCAN: return 0.6f + 1.5f * b;
+    case AN_JUMP: return 1.5f * hap * mind.energy;
+    case AN_FOCUS: return 0.7f;
+    case AN_TWITCH: return 0.6f;
+    case AN_CHECK_TIME: return (timerRun || settings.alarmOn) ? 3.0f : 0.0f;
+    case AN_COZY: return 2 * mind.love;
+    case AN_NUZZLE: return 1.2f * mind.love;
     default: return 0;
   }
 }
@@ -839,7 +813,9 @@ static void pickIdle(uint32_t now) {
   static const int IDLE[] = {AN_LOOK_AROUND, AN_CURIOUS, AN_THINK, AN_PEEK_SHY, AN_DOUBLE_TAKE, AN_EYE_ROLL,
                              AN_YAWN, AN_STRETCH, AN_SIGH, AN_SAD_DROOP, AN_SQUINT_SUS, AN_SMUG, AN_WIGGLE,
                              AN_HAPPY_BOUNCE, AN_EXCITED, AN_WINK_L, AN_WINK_R, AN_LOVE, AN_SNEEZE,
-                             AN_CONFUSED, AN_NOD_YES, AN_SHAKE_NO};
+                             AN_CONFUSED, AN_NOD_YES, AN_SHAKE_NO, AN_FIDGET, AN_SLOW_BLINK, AN_LONELY,
+                             AN_SHY_HIDE, AN_PROUD, AN_SING, AN_GRUMBLE, AN_SCAN, AN_JUMP, AN_FOCUS,
+                             AN_TWITCH, AN_CHECK_TIME, AN_COZY, AN_NUZZLE};
   const int N = sizeof(IDLE) / sizeof(IDLE[0]);
   float w[N]; float tot = 0;
   for (int i = 0; i < N; i++) {
@@ -852,6 +828,18 @@ static void pickIdle(uint32_t now) {
     r -= w[i];
     if (r <= 0) { lastIdle = IDLE[i]; playAnim(IDLE[i], now); return; }
   }
+}
+
+static void babble() {  // a quiet mood-matched chirp, now and then
+  float sad = clampf((0.42f - mind.joy) / 0.42f, 0, 1);
+  float hap = clampf((mind.joy - 0.62f) / 0.38f, 0, 1);
+  float r = frand();
+  int id;
+  if (mind.annoy > 0.4f) id = snd::S_GRUMBLE;
+  else if (sad > 0.4f) id = r < 0.6f ? snd::S_SAD : snd::S_SIGH;
+  else if (hap > 0.3f) id = r < 0.4f ? snd::S_HAPPY : (r < 0.7f ? snd::S_LOVE : snd::S_BLIP);
+  else id = r < 0.4f ? snd::S_THINK : (r < 0.7f ? snd::S_CURIOUS : snd::S_BLIP);
+  say(id);
 }
 
 static float blinkAmt(uint32_t now) {
@@ -870,24 +858,40 @@ static void directorUpdate(uint32_t now, float dt) {
   float since = (now - lastInteract) / 1000.0f;
   mind.bored = clampf((since - 20.0f) / 200.0f, 0, 1);
   mind.energy = clampf(mind.energy + dt * (sleeping ? 0.006f : -0.0028f), 0, 1);
-  float joyBase = 0.58f + 0.25f * mind.love - 0.35f * mind.bored - 0.45f * mind.annoy;
+  float joyBase = 0.58f + 0.25f * mind.love - 0.35f * mind.bored - 0.45f * mind.annoy - 0.2f * mind.fear;
   mind.joy += (joyBase - mind.joy) * clampf(dt * 0.12f, 0, 1);
   mind.annoy = fmaxf(0, mind.annoy - dt * 0.035f);
   mind.love = fmaxf(0, mind.love - dt * 0.004f);
   mind.dizzy = fmaxf(0, mind.dizzy - dt * 0.3f);
+  mind.fear = fmaxf(0, mind.fear - dt * 0.12f);
+  mind.alert = fmaxf(0, mind.alert - dt * 0.25f);
 
   if (petting()) {
     mind.joy = clampf(mind.joy + dt * 0.35f, 0, 1);
     mind.love = clampf(mind.love + dt * 0.22f, 0, 1);
     mind.annoy = fmaxf(0, mind.annoy - dt * 0.1f);
+    mind.fear = fmaxf(0, mind.fear - dt * 0.3f);
     if (now - lastHeartT > 650) { lastHeartT = now; spawnHeart(); }
+    if (now - lastPurrT > 700) { lastPurrT = now; say(mind.love > 0.6f && frand() < 0.3f ? snd::S_LOVE : snd::S_PURR); }
   }
   if (shaking && cur.active && cur.id == AN_DIZZY) cur.loopUntil = now + 500;
 
+  // ---- hearing
+  micPoll(now);
+
   // ---- animation timing
   animTick(now);
+  if (!cur.active && pendingAnim >= 0) { int a = pendingAnim; pendingAnim = -1; playAnim(a, now); }
 
-  bool idleOK = !cur.active && !sleeping && !menuOpen && !petting() && !T.down;
+  bool idleOK = !cur.active && !sleeping && !menuOpen && !petting() && !T.down && !ringing;
+
+  // someone is talking: lean in and listen until they stop
+  if (!ringing && !menuOpen && !sleeping && !petting() && !T.down && snd::mic.voiceNow && now > listenCool) {
+    if (cur.active && cur.id == AN_LISTEN) cur.loopUntil = now + 450;
+    else if (!cur.active) playAnim(AN_LISTEN, now, now + 450);
+  } else if (cur.active && cur.id == AN_LISTEN && now >= cur.loopUntil) {
+    listenCool = now + 3000;
+  }
 
   // ---- sleep / wake
   if (!sleeping && !fallingAsleep && idleOK && mind.energy < 0.28f && since > 40.0f) {
@@ -896,6 +900,10 @@ static void directorUpdate(uint32_t now, float dt) {
   }
   if (sleeping && !cur.active && mind.energy > 0.85f && now - sleepStart > 60000) wakeUp(now, false);
   if (sleeping && now - lastZ > 2400) { lastZ = now; spawnZ(); }
+  if (sleeping && !ringing) {
+    if (now >= nextSnore) { say(snd::S_SNORE); nextSnore = now + 3600; }
+    if (!cur.active && now >= nextDream) { playAnim(AN_DREAM, now); nextDream = now + (uint32_t)frange(9000, 17000); }
+  }
 
   // ---- demo mode (serial 'd'): plays every animation in turn
   if (demoMode && !cur.active && !menuOpen && now >= demoNext) {
@@ -910,9 +918,13 @@ static void directorUpdate(uint32_t now, float dt) {
     pickIdle(now);
     nextIdle = now + (uint32_t)(frange(3500, 8500) * (1.4f - 0.5f * mind.energy));
   }
+  if (idleOK && !demoMode && now >= nextBabble) {
+    babble();
+    nextBabble = now + (uint32_t)frange(16000, 42000);
+  }
 
   // ---- blinking
-  if (!sleeping && !petting() && !menuOpen && now >= nextBlink) {
+  if (!sleeping && !petting() && !menuOpen && !ringing && now >= nextBlink) {
     blinkT0 = now;
     float gap = frange(2200, 6000);
     if (frand() < 0.18f) gap = 260;  // double blink
@@ -930,7 +942,7 @@ static void directorUpdate(uint32_t now, float dt) {
 }
 
 // ============================================================================
-// Software renderer (RGB565 framebuffer, anti-aliased convex/concave polygons)
+// Software renderer (RGB565 framebuffer, anti-aliased polygons)
 // ============================================================================
 static uint16_t* fb = nullptr;
 static uint8_t covBuf[SCR_W + 4];
@@ -959,6 +971,7 @@ static void fillPoly(const V2* p, int n, const Shade& sh) {
   if (x1 > SCR_W - 1) x1 = SCR_W - 1;
   if (y0 > y1 || x0 > x1) return;
   int a256 = (int)(clampf(sh.alpha, 0, 1) * 256.0f);
+  if (a256 <= 0) return;
 
   for (int y = y0; y <= y1; y++) {
     memset(covBuf + x0, 0, x1 - x0 + 1);
@@ -1052,13 +1065,24 @@ static void makeSuper(V2* out, int count, int stride, float a, float b, float ex
   }
 }
 
-struct Item { V2 p[NP]; int n; Shade sh; };
-static const int MAX_ITEMS = 40;
+// polygons live in a shared vertex pool
+struct Item { V2* p; int n; Shade sh; };
+static const int MAX_ITEMS = 220;
+static const int POOL_SZ = 4600;
 static Item items[MAX_ITEMS];
-static int nItems = 0;
+static V2 pool[POOL_SZ];
+static int nItems = 0, poolUsed = 0;
 static float extMinY, extMaxY;
+static float gCa = 1, gSa = 0;
 
-static Item* newItem() { return nItems < MAX_ITEMS ? &items[nItems] : nullptr; }
+static Item* newItem(int nv) {
+  if (nItems >= MAX_ITEMS || poolUsed + nv > POOL_SZ) return nullptr;
+  Item* it = &items[nItems];
+  it->p = pool + poolUsed;
+  it->n = nv;
+  poolUsed += nv;
+  return it;
+}
 static void commitItem(Item* it) {
   for (int i = 0; i < it->n; i++) {
     if (it->p[i].y < extMinY) extMinY = it->p[i].y;
@@ -1072,11 +1096,15 @@ static void toScreen(float ux, float uy, float ca, float sa, float& sx, float& s
   sx = CXF + dx * ca - dy * sa;
   sy = CYF + dx * sa + dy * ca;
 }
+// center-relative upright coordinates -> screen
+static inline void P(float rx, float ry, float& sx, float& sy) {
+  sx = CXF + rx * gCa - ry * gSa;
+  sy = CYF + rx * gSa + ry * gCa;
+}
 
 static void circleItem(float cx, float cy, float r, uint8_t R, uint8_t G, uint8_t B, float alpha, bool grad, float ca, float sa) {
-  Item* it = newItem();
+  Item* it = newItem(32);
   if (!it) return;
-  it->n = 32;
   for (int i = 0; i < 32; i++) {
     float t = i * 2 * PI_F / 32;
     it->p[i].x = cx + cosf(t) * r;
@@ -1090,11 +1118,11 @@ static void circleItem(float cx, float cy, float r, uint8_t R, uint8_t G, uint8_
 }
 
 static void shapeItem(int kind, float cx, float cy, float size, float rot, uint8_t R, uint8_t G, uint8_t B, float alpha) {
-  Item* it = newItem();
+  int nv = (kind == 0) ? 40 : 10;
+  Item* it = newItem(nv);
   if (!it) return;
   float cr = cosf(rot), sr = sinf(rot);
   if (kind == 0) {  // heart
-    it->n = 40;
     for (int i = 0; i < 40; i++) {
       float t = i * 2 * PI_F / 40;
       float s3 = sinf(t);
@@ -1107,14 +1135,12 @@ static void shapeItem(int kind, float cx, float cy, float size, float rot, uint8
   } else if (kind == 1) {  // Z
     static const float zx[10] = {-1, 1, 1, -0.35f, 1, 1, -1, -1, 0.35f, -1};
     static const float zy[10] = {-1, -1, -0.55f, 0.55f, 0.55f, 1, 1, 0.55f, -0.55f, -0.55f};
-    it->n = 10;
     for (int i = 0; i < 10; i++) {
       float hx = zx[i] * size, hy = zy[i] * size;
       it->p[i].x = cx + hx * cr - hy * sr;
       it->p[i].y = cy + hx * sr + hy * cr;
     }
   } else {  // star
-    it->n = 10;
     for (int i = 0; i < 10; i++) {
       float t = i * PI_F / 5 - PI_F / 2;
       float rr = (i & 1) ? size * 0.45f : size;
@@ -1128,8 +1154,117 @@ static void shapeItem(int kind, float cx, float cy, float size, float rot, uint8
   commitItem(it);
 }
 
+// ---- UI primitives in center-relative upright coordinates ------------------------
+struct Col { uint8_t r, g, b; };
+
+static void flatShade(Item* it, Col c, float alpha) {
+  it->sh.r = c.r; it->sh.g = c.g; it->sh.b = c.b; it->sh.alpha = alpha; it->sh.grad = false;
+  it->sh.g0 = it->sh.gx = it->sh.gy = 0;
+}
+static void cCircle(float rx, float ry, float r, Col c, float alpha, bool grad = false) {
+  float sx, sy; P(rx, ry, sx, sy);
+  circleItem(sx, sy, r, c.r, c.g, c.b, alpha, grad, gCa, gSa);
+}
+static void cStroke(float x0, float y0, float x1, float y1, float w, Col c, float alpha) {  // rounded capsule
+  float ax, ay, bx, by;
+  P(x0, y0, ax, ay); P(x1, y1, bx, by);
+  Item* it = newItem(14);
+  if (!it) return;
+  float ang = atan2f(by - ay, bx - ax), r = w * 0.5f;
+  for (int i = 0; i < 7; i++) {
+    float t = ang + PI_F * 0.5f + i * PI_F / 6.0f;
+    it->p[i].x = ax + cosf(t) * r; it->p[i].y = ay + sinf(t) * r;
+    float u = ang - PI_F * 0.5f + i * PI_F / 6.0f;
+    it->p[7 + i].x = bx + cosf(u) * r; it->p[7 + i].y = by + sinf(u) * r;
+  }
+  flatShade(it, c, alpha);
+  commitItem(it);
+}
+static void cPoly(const float* xy, int n, Col c, float alpha) {
+  Item* it = newItem(n);
+  if (!it) return;
+  for (int i = 0; i < n; i++) P(xy[2 * i], xy[2 * i + 1], it->p[i].x, it->p[i].y);
+  flatShade(it, c, alpha);
+  commitItem(it);
+}
+static void cArc(float r0, float r1, float a0, float a1, Col c, float alpha) {  // ring sector, angles in radians
+  int segs = (int)((a1 - a0) / (6.0f * DEG)) + 2;
+  if (segs > 60) segs = 60;
+  Item* it = newItem(2 * (segs + 1));
+  if (!it) return;
+  for (int i = 0; i <= segs; i++) {
+    float a = a0 + (a1 - a0) * i / segs;
+    P(cosf(a) * r1, sinf(a) * r1, it->p[i].x, it->p[i].y);
+    P(cosf(a) * r0, sinf(a) * r0, it->p[2 * segs + 1 - i].x, it->p[2 * segs + 1 - i].y);
+  }
+  flatShade(it, c, alpha);
+  commitItem(it);
+}
+
+static const uint8_t SEGMASK[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+
+static void drawDigit(float cx, float cy, int mask, Col c, float alpha) {
+  const float w = 40, h = 78, t = 9;
+  float x0 = cx - w / 2 + t / 2, x1 = cx + w / 2 - t / 2, y0 = cy - h / 2 + t / 2, y1 = cy + h / 2 - t / 2;
+  float g = t * 0.62f, gm = g * 0.6f;
+  float S[7][4] = {{x0 + g, y0, x1 - g, y0}, {x1, y0 + g, x1, cy - gm}, {x1, cy + gm, x1, y1 - g}, {x0 + g, y1, x1 - g, y1},
+                   {x0, cy + gm, x0, y1 - g}, {x0, y0 + g, x0, cy - gm}, {x0 + g, cy, x1 - g, cy}};
+  for (int i = 0; i < 7; i++) {
+    bool lit = (mask >> i) & 1;
+    cStroke(S[i][0], S[i][1], S[i][2], S[i][3], t, c, lit ? alpha : alpha * 0.07f);
+  }
+}
+static void drawTime(float cy, int a, int b, int c2, int d, bool tensBlank, bool colon, Col col, float alpha) {
+  drawDigit(-97, cy, tensBlank ? 0 : SEGMASK[a], col, alpha);
+  drawDigit(-45, cy, SEGMASK[b], col, alpha);
+  drawDigit(45, cy, SEGMASK[c2], col, alpha);
+  drawDigit(97, cy, SEGMASK[d], col, alpha);
+  if (colon) { cCircle(0, cy - 17, 5, col, alpha); cCircle(0, cy + 17, 5, col, alpha); }
+}
+
+static const Col BTN_BG = {40, 45, 60}, DARK = {18, 20, 28};
+
+static void buttonBase(float x, float y, float r, Col ec, bool accent, float alpha) {
+  cCircle(x, y, r + 2.5f, ec, alpha * 0.45f);
+  if (accent) cCircle(x, y, r, ec, alpha, true);
+  else cCircle(x, y, r, BTN_BG, alpha, true);
+}
+static void iconTri(float x, float y, float r, bool up, Col c, float alpha) {
+  float s = up ? -1.0f : 1.0f;
+  float pts[6] = {x, y + s * 0.34f * r, x + 0.4f * r, y - s * 0.22f * r, x - 0.4f * r, y - s * 0.22f * r};
+  cPoly(pts, 3, c, alpha);
+}
+static void iconBell(float x, float y, float r, Col c, float alpha, bool slash) {
+  static const float H[7][2] = {{0, -0.62f}, {0.18f, -0.55f}, {0.31f, -0.36f}, {0.35f, -0.05f}, {0.42f, 0.22f}, {0.56f, 0.38f}, {0.58f, 0.48f}};
+  float pts[28];
+  float s = r * 0.95f;
+  for (int i = 0; i < 7; i++) { pts[2 * i] = x + H[i][0] * s; pts[2 * i + 1] = y + H[i][1] * s - 3; }
+  for (int i = 0; i < 7; i++) { pts[2 * (7 + i)] = x - H[6 - i][0] * s; pts[2 * (7 + i) + 1] = y + H[6 - i][1] * s - 3; }
+  cPoly(pts, 14, c, alpha);
+  cCircle(x, y + 0.62f * s - 3, 0.13f * s, c, alpha);
+  if (slash) cStroke(x - 0.55f * s, y - 0.5f * s, x + 0.55f * s, y + 0.55f * s, r * 0.12f, Col{255, 90, 80}, alpha);
+}
+static void iconClock(float x, float y, float r, Col c, float alpha) {
+  cCircle(x, y, r * 0.62f, c, alpha);
+  cCircle(x, y, r * 0.47f, BTN_BG, alpha);
+  cStroke(x, y, x, y - 0.3f * r, r * 0.1f, c, alpha);
+  cStroke(x, y, x + 0.22f * r, y + 0.1f * r, r * 0.1f, c, alpha);
+}
+static void iconSpeaker(float x, float y, int vol, Col c, float alpha) {
+  float body[12] = {x - 15, y - 6, x - 6, y - 6, x + 5, y - 15, x + 5, y + 15, x - 6, y + 6, x - 15, y + 6};
+  cPoly(body, 6, c, alpha);
+  for (int i = 0; i < vol; i++) {
+    float bx = x + 12 + i * 8, hh = 7 + i * 5;
+    cStroke(bx, y - hh, bx, y + hh, 3.5f, c, alpha);
+  }
+  if (vol == 0) {
+    cStroke(x + 11, y - 8, x + 25, y + 8, 3.5f, Col{255, 90, 80}, alpha);
+    cStroke(x + 11, y + 8, x + 25, y - 8, 3.5f, Col{255, 90, 80}, alpha);
+  }
+}
+
 static void updateParts(float dt) {
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < NPARTS; i++) {
     Part& p = parts[i];
     if (!p.on) continue;
     p.life += dt;
@@ -1141,6 +1276,9 @@ static void updateParts(float dt) {
     } else if (p.type == 0) {
       p.phase += dt * 3.0f;
       p.x += (p.vx + sinf(p.phase) * 14) * dt; p.y += p.vy * dt;
+    } else if (p.type == 3) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= (1.0f - 4.0f * dt); p.vy *= (1.0f - 4.0f * dt);
     } else {
       p.x += p.vx * dt; p.y += p.vy * dt; p.size = 9 + p.life * 5;
     }
@@ -1150,15 +1288,100 @@ static void updateParts(float dt) {
 
 static float menuEase() { return menuP < 0 ? 0 : (menuP > 1 ? 1 : menuP); }
 
+static void drawPageUI(int pg, float mp, Col ec) {
+  float al = mp;
+  if (pg == PG_COLOR) {
+    for (int k = 0; k < 8; k++) {
+      float ang = k * 45.0f * DEG;
+      float rr = MENU_RING * mp;
+      float rx = rr * sinf(ang), ry = -rr * cosf(ang);
+      float rad = 30.0f * mp;
+      if (k == settings.colorIdx) cCircle(rx, ry, rad + 6, Col{255, 255, 255}, 0.9f);
+      cCircle(rx, ry, rad, Col{PRESETS[k][0], PRESETS[k][1], PRESETS[k][2]}, 1.0f, true);
+      cCircle(rx - rad * 0.32f, ry - rad * 0.45f, rad * 0.2f, Col{255, 255, 255}, 0.45f);
+    }
+    // volume button under the eyes
+    cCircle(0, 80, 34 * mp, BTN_BG, al, true);
+    iconSpeaker(-3, 80, settings.vol, ec, al);
+    return;
+  }
+  if (pg == PG_TIMER) {
+    int secs = timerRun ? (int)(((int32_t)(timerEnd - gNow) + 999) / 1000) : settings.timerMin * 60;
+    if (secs < 0) secs = 0;
+    int mm = secs / 60, ss = secs % 60;
+    bool colon = !timerRun || ((gNow / 500) & 1) == 0;
+    drawTime(-18, mm / 10, mm % 10, ss / 10, ss % 10, false, colon, ec, al);
+    buttonBase(0, 97, 54, ec, true, al);
+    if (timerRun) {  // stop square
+      float sq[8] = {-17, 80, 17, 80, 17, 114, -17, 114};
+      cPoly(sq, 4, DARK, al);
+    } else {          // play triangle
+      float tri[6] = {-12, 73, 24, 97, -12, 121};
+      cPoly(tri, 3, DARK, al);
+    }
+    if (!timerRun) {
+      buttonBase(-112, 97, 42, ec, false, al);
+      cStroke(-128, 97, -96, 97, 7, ec, al);
+      buttonBase(112, 97, 42, ec, false, al);
+      cStroke(96, 97, 128, 97, 7, ec, al);
+      cStroke(112, 81, 112, 113, 7, ec, al);
+    }
+    return;
+  }
+  // alarm / set time
+  bool set = (pg == PG_SETTIME);
+  int h = set ? setH : settings.alarmH, m = set ? setM : settings.alarmM;
+  int h12 = h % 12 == 0 ? 12 : h % 12;
+  drawTime(-21, h12 / 10, h12 % 10, m / 10, m % 10, h12 < 10, true, ec, al);
+  const float ax[4] = {-71, -71, 71, 71}, ay[4] = {-87, 50, -87, 50};
+  for (int i = 0; i < 4; i++) {
+    buttonBase(ax[i], ay[i], 32, ec, false, al);
+    iconTri(ax[i], ay[i], 32, i == 0 || i == 2, ec, al);
+  }
+  // sun / moon: AM or PM
+  if (h < 12) {
+    cCircle(146, -21, 10, ec, al);
+    for (int i = 0; i < 8; i++) {
+      float a = i * 45.0f * DEG;
+      cStroke(146 + cosf(a) * 16, -21 + sinf(a) * 16, 146 + cosf(a) * 21, -21 + sinf(a) * 21, 3.5f, ec, al);
+    }
+  } else {
+    cCircle(146, -21, 14, ec, al);
+    cCircle(153, -26, 12, Col{0, 0, 0}, al);
+  }
+  if (set) {
+    buttonBase(0, 121, 46, ec, true, al);
+    cStroke(-15, 123, -4, 136, 8, DARK, al);
+    cStroke(-4, 136, 18, 108, 8, DARK, al);
+  } else {
+    buttonBase(0, 121, 46, ec, settings.alarmOn, al);
+    iconBell(0, 121, 46, settings.alarmOn ? DARK : ec, al, false);
+    // clock button: filled with the accent color while the time still needs setting
+    buttonBase(-120, 121, 32, ec, !rtcTrusted, al);
+    iconClock(-120, 121, 32, rtcTrusted ? ec : DARK, al);
+  }
+}
+
 static void buildScene() {
-  nItems = 0; extMinY = 1e9f; extMaxY = -1e9f;
+  nItems = 0; poolUsed = 0; extMinY = 1e9f; extMaxY = -1e9f;
   float ca = cosf(gAlpha), sa = sinf(gAlpha);
+  gCa = ca; gSa = sa;
   float mp = menuEase();
-  float sM = 1.0f - 0.5f * mp;
-  uint8_t cr8 = (uint8_t)clampf(curCol[0], 0, 255), cg8 = (uint8_t)clampf(curCol[1], 0, 255), cb8 = (uint8_t)clampf(curCol[2], 0, 255);
+  float pgS = (shownPage == PG_COLOR) ? 0.5f : (shownPage == PG_FACE ? 1.0f : 0.34f);
+  float pgY = (shownPage >= PG_TIMER) ? -150.0f : 0.0f;
+  float sM = 1.0f - (1.0f - pgS) * mp;
+  float eyeDY = pgY * mp;
+  Col ec = {(uint8_t)clampf(curCol[0], 0, 255), (uint8_t)clampf(curCol[1], 0, 255), (uint8_t)clampf(curCol[2], 0, 255)};
+  uint8_t cr8 = ec.r, cg8 = ec.g, cb8 = ec.b;
   uint8_t hr = (uint8_t)(cr8 + (255 - cr8) * 0.75f), hg = (uint8_t)(cg8 + (255 - cg8) * 0.75f), hb = (uint8_t)(cb8 + (255 - cb8) * 0.75f);
   float blink = blinkAmt(gNow);
-  if (sleeping || petting()) blink = 0;
+  if (sleeping || petting() || ringing) blink = 0;
+
+  // timer progress: a thin ring around the edge that slowly empties
+  if (timerRun && mp < 0.5f && timerLen > 0) {
+    float frac = clampf((float)(int32_t)(timerEnd - gNow) / (float)timerLen, 0, 1);
+    if (frac > 0.002f) cArc(222, 228, -PI_F / 2, -PI_F / 2 + 2 * PI_F * frac, ec, 0.5f * (1.0f - 2 * mp));
+  }
 
   for (int e = 0; e < 2; e++) {
     float sign = (e == 0) ? -1.0f : 1.0f;
@@ -1167,8 +1390,8 @@ static void buildScene() {
     float a = 60.0f * wmul * (1.0f + 0.10f * blink) * sM;
     float b = 76.0f * hmul * (1.0f - 0.80f * blink) * sM;
     if (b < 11.0f * sM) b = 11.0f * sM;
-    float ex = CXF + sign * (95.0f + sp[C_GAP].x) * sM + sp[C_LX].x * sM;
-    float ey = CYF + sp[C_LY].x * sM + (e == 0 ? sp[C_YL].x : sp[C_YR].x);
+    float ex = CXF + sign * (95.0f + sp[C_GAP].x) * sM + sp[C_LX].x * sM + ringJit[e] * sM;
+    float ey = CYF + sp[C_LY].x * sM + (e == 0 ? sp[C_YL].x : sp[C_YR].x) * sM + eyeDY;
     float roll = sp[C_ROLL].x * DEG;
     float rx = ex - CXF, ry = ey - CYF;
     ex = CXF + rx * cosf(roll) - ry * sinf(roll);
@@ -1181,9 +1404,8 @@ static void buildScene() {
     float expo = sp[C_N].x;
     expo = lerpf(2.3f, expo, clampf((b / sM - 14.0f) / 34.0f, 0, 1));  // squashed => rounder ends
 
-    Item* body = newItem();
+    Item* body = newItem(NP);
     if (!body) break;
-    body->n = NP;
     makeSuper(body->p, NP, 1, a, b, expo, 0, 0, a, b, bend, shear, rot, scx, scy);
     body->sh.r = cr8; body->sh.g = cg8; body->sh.b = cb8; body->sh.alpha = 1.0f; body->sh.grad = true;
     float dvx = -sa, dvy = ca;
@@ -1193,17 +1415,15 @@ static void buildScene() {
     commitItem(body);
 
     // soft broad highlight + crisp small highlight (light from upper left), they bend with the eye
-    Item* h1 = newItem();
+    Item* h1 = newItem(NP / 2);
     if (h1) {
-      h1->n = NP / 2;
       makeSuper(h1->p, NP / 2, 2, 0.62f * a, 0.30f * b, 2.4f, -0.12f * a, -0.42f * b, a, b, bend, shear, rot, scx, scy);
       h1->sh.r = hr; h1->sh.g = hg; h1->sh.b = hb; h1->sh.alpha = 0.14f; h1->sh.grad = false;
       h1->sh.g0 = h1->sh.gx = h1->sh.gy = 0;
       commitItem(h1);
     }
-    Item* h2 = newItem();
+    Item* h2 = newItem(NP / 2);
     if (h2) {
-      h2->n = NP / 2;
       makeSuper(h2->p, NP / 2, 2, 0.24f * a, 0.12f * b, 2.4f, -0.32f * a, -0.58f * b, a, b, bend, shear, rot, scx, scy);
       h2->sh.r = hr; h2->sh.g = hg; h2->sh.b = hb; h2->sh.alpha = 0.55f; h2->sh.grad = false;
       h2->sh.g0 = h2->sh.gx = h2->sh.gy = 0;
@@ -1211,35 +1431,39 @@ static void buildScene() {
     }
   }
 
+  // ---- the alarm-clock hammer: pivots above his eyes and strikes them like bells
+  if (hammerVis > 0.02f) {
+    float th = hammerAng * DEG;
+    float slide = (1.0f - hammerVis) * -90.0f;  // slides in from above
+    float px = 0, py = -128.0f + slide;
+    float hx = px + 112.0f * sinf(th), hy = py + 112.0f * cosf(th);
+    float al = clampf(hammerVis * 1.4f, 0, 1);
+    cStroke(px, py, hx, hy, 9, Col{140, 146, 164}, al);
+    cCircle(hx, hy, 18, Col{228, 231, 240}, al, true);
+    cCircle(hx - 6, hy - 7, 5, Col{255, 255, 255}, al * 0.6f);
+    cCircle(px, py, 9, Col{105, 111, 130}, al, true);
+  }
+
   // ---- particles
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < NPARTS; i++) {
     Part& p = parts[i];
     if (!p.on) continue;
     float al = fminf(1.0f, fminf(p.life / 0.3f, (p.max - p.life) / 0.5f));
+    if (p.type == 3) al = clampf(1.0f - p.life / p.max, 0, 1);
     if (al <= 0) continue;
     float sx, sy;
     toScreen(p.x, p.y, ca, sa, sx, sy);
     if (p.type == 0) shapeItem(0, sx, sy, p.size, gAlpha, 255, 100, 150, al * 0.92f);
     else if (p.type == 1) shapeItem(1, sx, sy, p.size, gAlpha, 150, 170, 240, al * 0.85f);
-    else shapeItem(2, sx, sy, p.size, p.rot + gAlpha, 255, 225, 80, al * 0.95f);
-  }
-
-  // ---- color menu: ring of presets around the (shrunken) eyes
-  if (mp > 0.01f) {
-    for (int k = 0; k < 8; k++) {
-      float ang = k * 45.0f * DEG;
-      float rr = MENU_RING * mp;
-      float ux = CXF + rr * sinf(ang), uy = CYF - rr * cosf(ang);
-      float sx, sy;
-      toScreen(ux, uy, ca, sa, sx, sy);
-      float rad = 30.0f * mp;
-      if (k == settings.colorIdx) circleItem(sx, sy, rad + 6, 255, 255, 255, 0.9f, false, ca, sa);
-      circleItem(sx, sy, rad, PRESETS[k][0], PRESETS[k][1], PRESETS[k][2], 1.0f, true, ca, sa);
-      float hx, hy;
-      toScreen(ux - rad * 0.32f, uy - rad * 0.45f, ca, sa, hx, hy);
-      circleItem(hx, hy, rad * 0.2f, 255, 255, 255, 0.45f, false, ca, sa);
+    else if (p.type == 2) shapeItem(2, sx, sy, p.size, p.rot + gAlpha, 255, 225, 80, al * 0.95f);
+    else {
+      float dx = cosf(p.rot) * p.size, dy = sinf(p.rot) * p.size;
+      cStroke(p.x - CXF, p.y - CYF, p.x - CXF + dx, p.y - CYF + dy, 5, Col{255, 236, 150}, al);
     }
   }
+
+  // ---- menu pages
+  if (mp > 0.02f) drawPageUI(shownPage, mp, ec);
 }
 
 // ============================================================================
@@ -1251,33 +1475,41 @@ static void init(uint16_t* framebuffer, uint32_t seed) {
   fb = framebuffer;
   memset(fb, 0, (size_t)SCR_W * SCR_H * 2);
   rngState = seed ? seed : 0x1234567u;
+  snd::E.rng ^= rngState;
   for (int i = 0; i < NP; i++) {
     float t = i * 2 * PI_F / NP;
     tabC[i] = cosf(t); tabS[i] = sinf(t);
   }
   buildAnims();
+  mapSounds();
   for (int c = 0; c < C_COUNT; c++) { sp[c].x = sp[c].t = NEUTRAL[c]; sp[c].v = 0; }
   sp[C_H].x = 0.17f;
   memset(parts, 0, sizeof(parts));
   memset(&T, 0, sizeof(T));
   for (int c = 0; c < 3; c++) curCol[c] = PRESETS[settings.colorIdx & 7][c];
+  snd::setVolume(settings.vol);
   prevMinY = 0; prevMaxY = SCR_H - 1;
 }
 
 static void start(uint32_t now) {
   gNow = now; lastInteract = now;
-  nextIdle = now + 5000; nextBlink = now + 3000; nextSaccade = now + 1500;
+  nextIdle = now + 5000; nextBlink = now + 3000; nextSaccade = now + 1500; nextBabble = now + 20000;
+  nextDream = now + 8000; nextSnore = now + 2000;
   playAnim(AN_BOOT, now);
 }
 
 static void update(uint32_t now, float dt, const Input& in) {
   gNow = now;
   dt = clampf(dt, 0.001f, 0.05f);
+  snd::setVolume(settings.vol);
   if (in.imu) imuUpdate(now, dt, in.ax, in.ay, in.az);
+  clockUpdate(now, in);
+  ringUpdate(now, dt);
   touchUpdate(now, in.touch, in.tx, in.ty);
 
   // menu spring + auto close
-  if (menuOpen && now - menuT0 > 12000) closeMenu();
+  uint32_t autoClose = (page == PG_COLOR) ? 12000 : 25000;
+  if (menuOpen && now - menuT0 > autoClose) closeMenu();
   float mt = menuOpen ? 1.0f : 0.0f;
   menuV += ((mt - menuP) * 220.0f - menuV * 2.0f * 0.85f * sqrtf(220.0f)) * dt;
   menuP += menuV * dt;
@@ -1293,7 +1525,11 @@ static void update(uint32_t now, float dt, const Input& in) {
   float tg[C_COUNT];
   float tsec = now * 0.001f;
   bool animOn = cur.active;
-  if (animOn) {
+  if (ringing) {
+    memcpy(tg, NEUTRAL, sizeof(tg));
+    tg[C_W] = 1.04f; tg[C_H] = 1.08f; tg[C_GAP] = 2;
+    springK = 650.0f; springZ = 0.30f;
+  } else if (animOn) {
     const Anim& A = ANIMS[cur.id];
     memcpy(tg, A.s[cur.idx].v, sizeof(tg));
     springK = A.k; springZ = A.z;
@@ -1306,12 +1542,15 @@ static void update(uint32_t now, float dt, const Input& in) {
   // ---- additive life: breathing, tiny drift, saccades, attention
   float breath = sinf(tsec * (sleeping ? 1.1f : 1.7f));
   tg[C_H] *= 1.0f + (sleeping ? 0.14f : 0.02f) * breath;
+  if (petting()) tg[C_H] *= 1.0f + 0.05f * sinf(tsec * 9.0f);  // purring
   tg[C_LX] += 2.2f * sinf(tsec * 0.9f) + 1.3f * sinf(tsec * 2.1f + 1.0f);
   tg[C_LY] += 1.6f * sinf(tsec * 0.7f + 2.0f);
-  if (!sleeping) tg[C_ROLL] += 2.0f * sinf(tsec * 0.37f);
+  if (!sleeping && !ringing) tg[C_ROLL] += 2.0f * sinf(tsec * 0.37f);
+  if (mind.fear > 0.25f && !animOn) tg[C_LX] += 1.6f * mind.fear * sinf(tsec * 38.0f);  // trembling
 
-  if (!animOn && !sleeping && !menuOpen && !petting()) {
+  if (!animOn && !sleeping && !menuOpen && !petting() && !ringing) {
     float ax = gazeX, ay = gazeY;
+    if (snd::mic.voiceNow) { ax = 0; ay = -3; }
     if (T.down) {
       ax = clampf(T.x * 0.22f, -34, 34); ay = clampf(T.y * 0.2f, -24, 24);
     } else if (now < lookAtUntil) {
@@ -1319,14 +1558,14 @@ static void update(uint32_t now, float dt, const Input& in) {
     }
     tg[C_LX] += ax; tg[C_LY] += ay;
   }
-  if (menuOpen) { tg[C_LX] = 0; tg[C_LY] = 0; }
+  if (menuOpen || ringing) { tg[C_LX] = 0; tg[C_LY] = 0; }
 
   for (int c = 0; c < C_COUNT; c++) sp[c].t = tg[c];
   physics(dt);
   updateParts(dt);
 }
 
-// Draws the frame into the framebuffer. Returns false if nothing needs flushing.
+// Draws the frame into the framebuffer. Returns the rows that changed:
 // y0..y1 (inclusive, y0 even, y1 odd) are the rows to push to the panel.
 static bool render(int& y0, int& y1) {
   buildScene();
@@ -1350,7 +1589,7 @@ static bool render(int& y0, int& y1) {
   return true;
 }
 
-// ---- helpers for the serial console
+// ---- helpers for the serial console / tests
 static int animCount() { return AN_COUNT; }
 static const char* animName(int i) { return (i >= 0 && i < AN_COUNT) ? ANIMS[i].name : "?"; }
 static void forceAnim(int i) { if (i >= 0 && i < AN_COUNT) { sleeping = false; cur.active = false; playAnim(i, gNow); } }
@@ -1361,5 +1600,8 @@ static void toggleSleep() {
   if (sleeping) wakeUp(gNow, false);
   else { mind.energy = 0.2f; lastInteract = gNow - 60000; }
 }
+static void testRing(int kind) { startRing(kind, gNow); }
+static void openPage(int p) { setPage(p, gNow); }
+static bool isRinging() { return ringing; }
 
 }  // namespace ch
