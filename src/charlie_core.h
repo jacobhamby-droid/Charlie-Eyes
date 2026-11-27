@@ -533,6 +533,36 @@ static void onFall(uint32_t now) {
   playAnim(AN_SCARED, now);
 }
 
+// ---- friend prompt (new Charlie nearby) ----
+static bool friendPrompt = false;
+static uint8_t friendMac[6] = {0};
+static bool haveFriend = false;
+static uint32_t friendPromptT = 0;
+static uint32_t lastPeerInteract = 0;
+
+static void onNewPeer(const uint8_t* mac) {
+  if (haveFriend) return;
+  memcpy(friendMac, mac, 6);
+  friendPrompt = true;
+  friendPromptT = gNow;
+  playAnim(AN_FRIEND_ASK, gNow);
+  say(snd::S_CURIOUS);
+}
+static void becomeFriends() {
+  haveFriend = true;
+  friendPrompt = false;
+  mind.joy = clampf(mind.joy + 0.2f, 0, 1);
+  mind.love = clampf(mind.love + 0.15f, 0, 1);
+  playAnim(AN_FRIEND_YES, gNow);
+  say(snd::S_HAPPY);
+}
+static bool tapOnFriendPrompt(float ux, float uy) {
+  // ? sits at upper center
+  float dx = ux - 0, dy = uy - (-140);
+  return dx*dx + dy*dy < 50*50;
+}
+
+
 static void onPoke(uint32_t now, float ux, float uy) {
   if (friendPrompt && tapOnFriendPrompt(ux, uy)) { becomeFriends(); return; }
   lastInteract = now;
@@ -1540,35 +1570,6 @@ static void peerMood(float joy, float energy, float annoy, float love) {
   }
 }
 
-
-// ---- friend prompt (new Charlie nearby) ----
-static bool friendPrompt = false;
-static uint8_t friendMac[6] = {0};
-static bool haveFriend = false;
-static uint32_t friendPromptT = 0;
-static uint32_t lastPeerInteract = 0;
-
-static void onNewPeer(const uint8_t* mac) {
-  if (haveFriend) return;
-  memcpy(friendMac, mac, 6);
-  friendPrompt = true;
-  friendPromptT = gNow;
-  playAnim(AN_FRIEND_ASK, gNow);
-  say(snd::S_CURIOUS);
-}
-static void becomeFriends() {
-  haveFriend = true;
-  friendPrompt = false;
-  mind.joy = clampf(mind.joy + 0.2f, 0, 1);
-  mind.love = clampf(mind.love + 0.15f, 0, 1);
-  playAnim(AN_FRIEND_YES, gNow);
-  say(snd::S_HAPPY);
-}
-static bool tapOnFriendPrompt(float ux, float uy) {
-  // ? sits at upper center
-  float dx = ux - 0, dy = uy - (-140);
-  return dx*dx + dy*dy < 50*50;
-}
 
 // ============================================================================
 // Public API
