@@ -5,6 +5,7 @@
 #include <string.h>
 #include <math.h>
 #include "charlie_sound.h"
+#include <esp_mac.h>
 
 namespace ch {
 
@@ -191,7 +192,7 @@ static bool playAnim(int id, uint32_t now, uint32_t loopUntil = 0) {
   cur.stepEnd = now + A.s[0].ms; cur.loopUntil = loopUntil;
   if (A.snd) say(A.snd);
   // icons disabled: eyes only
-  if (A.fx == FX_STARS) dizzyFx = true;
+  // no disk/star overlay on dizzy
   return true;
 }
 
@@ -199,7 +200,7 @@ static bool playAnim(int id, uint32_t now, uint32_t loopUntil = 0) {
 // ---- reaction pools: at least 5 choices so nothing feels scripted ----
 static int pick(const int* a, int n) { return a[(int)(frand() * n) % n]; }
 static const int MAD_POOL[] = {AN_ANGRY, AN_MAD1, AN_MAD2, AN_MAD3, AN_MAD4, AN_MAD5};
-static const int SHAKE_POOL[] = {AN_DIZZY, AN_SHAKE1, AN_SHAKE2, AN_SHAKE3, AN_SHAKE4, AN_SHAKE5};
+static const int SHAKE_POOL[] = {AN_DIZZY, AN_SHAKE1, AN_SHAKE2, AN_SHAKE3, AN_SHAKE4, AN_SHAKE5, AN_DIZZY2, AN_DIZZY3, AN_DIZZY4, AN_DIZZY5, AN_DIZZY6};
 static const int POKE_POOL[] = {AN_POKE_SURPRISE, AN_POKE1, AN_POKE2, AN_POKE3, AN_POKE4, AN_POKE5};
 static const int PET_POOL[] = {AN_PET_END, AN_PET1, AN_PET2, AN_PET3, AN_PET4, AN_PET5};
 static const int HAPPY_POOL[] = {AN_HAPPY_BOUNCE, AN_HAPPY1, AN_HAPPY2, AN_HAPPY3, AN_HAPPY4, AN_HAPPY5};
@@ -209,7 +210,7 @@ static const int ANNOY_POOL[] = {AN_POKE_ANNOYED, AN_SHAKE_NO, AN_GRUMBLE, AN_MA
 
 static void onAnimEnd(int id) {
   if (id == AN_SLEEP_NOD) { sleeping = true; fallingAsleep = false; sleepStart = gNow; }
-  if (id == AN_DIZZY) dizzyFx = false;
+
 }
 
 static void animTick(uint32_t now) {
@@ -491,6 +492,7 @@ static void wakeUp(uint32_t now, bool startled) {
 }
 
 static void onShakeStart(uint32_t now) {
+  if (ballOn && ballMine) { throwBall(); return; }
   if (ringing) return;
   lastInteract = now;
   if (sleeping) { sleeping = false; fallingAsleep = false; mind.energy = fmaxf(mind.energy, 0.5f); }
@@ -498,7 +500,7 @@ static void onShakeStart(uint32_t now) {
   // intensity judged later in onShakeEnd; start with mild happy wiggle unless already hard
   if (shakePeak > 1.8f) {
     mind.dizzy = 1.0f;
-    playAnim(pick(SHAKE_POOL, 6), now, now + 1200);
+    playAnim(pick(SHAKE_POOL, 11), now, now + 1200);
   } else {
     mind.joy = clampf(mind.joy + 0.15f, 0, 1);
     mind.love = clampf(mind.love + 0.08f, 0, 1);
@@ -513,7 +515,7 @@ static void onShakeEnd(uint32_t now) {
   if (shakePeak > 2.4f) {
     // very hard: dizzy then eyes "fall off"
     mind.dizzy = 1.0f;
-    playAnim(pick(SHAKE_POOL, 6), now, now + 800);
+    playAnim(pick(SHAKE_POOL, 11), now, now + 800);
     // schedule fall-off by setting a high pending later; for now recover slowly
   } else if (shakePeak > 1.6f) {
     playAnim(AN_DIZZY_RECOVER, now);
@@ -534,62 +536,81 @@ static void onFall(uint32_t now) {
 }
 
 // ---- friend prompt (new Charlie nearby) ----
-static bool friendPrompt = false;
-static uint8_t friendMac[6] = {0};
 static bool haveFriend = false;
-static uint32_t friendPromptT = 0;
 static uint32_t lastPeerInteract = 0;
-// ball that can roll off one Charlie onto the other
+// shared play
+static int playState = 0;          // 0=idle 1=surprise 2=talk 3=catch
+static uint32_t playT0 = 0;
+static bool iAmLeader = false;
 static bool ballOn = false;
-static float ballX = -240, ballY = 40, ballVX = 0;
-static bool ballOutgoing = false;
-static uint32_t lastBallT = 0;
-static uint8_t pendingEvent = 0;  // 1 = ball coming from me
+static float ballX = 0, ballY = 30, ballVX = 0;
+static bool ballMine = false;      // I currently have the ball
+static uint32_t lastThrowT = 0;
+static uint8_t pendingEvent = 0;   // 1=throw toward peer  2=start catch
+static uint32_t lastChirpT = 0;
 
 static void onNewPeer(const uint8_t* mac) {
   if (haveFriend) return;
-  memcpy(friendMac, mac, 6);
-  friendPrompt = true;
-  friendPromptT = gNow;
-  playAnim(AN_FRIEND_ASK, gNow);
-  say(snd::S_CURIOUS);
-}
-static void becomeFriends() {
   haveFriend = true;
-  friendPrompt = false;
-  mind.joy = clampf(mind.joy + 0.2f, 0, 1);
-  mind.love = clampf(mind.love + 0.15f, 0, 1);
-  playAnim(AN_FRIEND_YES, gNow);
-  say(snd::S_HAPPY);
+  playState = 1; playT0 = gNow;
+  // lower MAC is leader
+  uint8_t my[6]; esp_read_mac(my, ESP_MAC_WIFI_STA);
+  iAmLeader = memcmp(my, mac, 6) < 0;
+  playAnim(AN_POKE_SURPRISE, gNow);
+  say(snd::S_STARTLE);
 }
-static void startBallOut() {
-  if (!haveFriend || ballOn) return;
-  ballOn = true; ballOutgoing = true;
-  ballX = -200; ballY = 30; ballVX = 280;
-  lastBallT = gNow;
+static void startCatch() {
+  playState = 3; playT0 = gNow;
+  if (iAmLeader) {
+    ballOn = true; ballMine = true; ballX = -80; ballVX = 0;
+  }
+}
+static void throwBall() {
+  if (!ballOn || !ballMine) return;
+  ballMine = false;
+  ballVX = 320;
   pendingEvent = 1;
+  lastThrowT = gNow;
+  say(snd::S_HAPPY);
+  playAnim(pick(HAPPY_POOL, 6), gNow);
 }
-static void startBallIn() {
-  ballOn = true; ballOutgoing = false;
-  ballX = 220; ballY = 30; ballVX = -260;
-  lastBallT = gNow;
+static void receiveBall() {
+  ballOn = true; ballMine = true; ballX = 200; ballVX = -180;
+  playAnim(AN_HAPPY1, gNow);
 }
 static void ballUpdate(float dt) {
   if (!ballOn) return;
-  ballX += ballVX * dt;
-  ballY = 30 + sinf(ballX * 0.04f) * 8;
-  if (ballOutgoing && ballX > 260) { ballOn = false; }
-  if (!ballOutgoing && ballX < -260) { ballOn = false; }
+  if (!ballMine) {
+    ballX += ballVX * dt;
+    ballY = 30 + sinf(ballX * 0.05f) * 10;
+    if (ballX > 260) ballOn = false;
+  } else {
+    // held, gentle bounce
+    ballX = -60 + sinf(gNow / 200.0f) * 12;
+    ballY = 20 + sinf(gNow / 160.0f) * 8;
+  }
 }
-static bool tapOnFriendPrompt(float ux, float uy) {
-  // envelope sits in the front, near center
-  float dx = ux - 0, dy = uy - 20;
-  return dx*dx + dy*dy < 55*55;
+static void playUpdate(uint32_t now) {
+  if (playState == 0) return;
+  uint32_t el = now - playT0;
+  if (playState == 1) {  // surprise
+    if (el > 1200) { playState = 2; playT0 = now; lastChirpT = now; }
+  } else if (playState == 2) {  // maniac chirp talk
+    if (now - lastChirpT > 180) { lastChirpT = now; say(snd::S_BLIP); }
+    if (el > 2000) startCatch();
+  } else if (playState == 3) {  // catch for ~60s
+    if (el > 60000) { playState = 0; ballOn = false; return; }
+    // leader with ball throws after a beat
+    if (ballMine && now - lastThrowT > 1800 && frand() < 0.4f) throwBall();
+  }
+}
+static void onPeerEvent(uint8_t ev) {
+  if (ev == 1) receiveBall();
+  if (ev == 2) startCatch();
 }
 
 
 static void onPoke(uint32_t now, float ux, float uy) {
-  if (friendPrompt && tapOnFriendPrompt(ux, uy)) { becomeFriends(); return; }
   lastInteract = now;
   mind.energy = fminf(1.0f, mind.energy + 0.03f);
   mind.alert = fmaxf(mind.alert, 0.5f);
@@ -1543,38 +1564,7 @@ static void buildScene() {
     cCircle(px, py, 9, Col{105, 111, 130}, al, true);
   }
 
-  // ---- friend invite: envelope in the front (center, in front of the eyes)
-  if (friendPrompt && !haveFriend) {
-    float al = 1.0f;
-    float bob = sinf(gNow / 180.0f) * 6.0f;
-    float ex0 = 0, ey0 = 20 + bob;
-    // envelope body
-    float body[8] = {ex0-38, ey0-22, ex0+38, ey0-22, ex0+38, ey0+28, ex0-38, ey0+28};
-    cPoly(body, 4, Col{255, 214, 90}, al);
-    // flap
-    float flap[6] = {ex0-38, ey0-22, ex0+38, ey0-22, ex0, ey0+4};
-    cPoly(flap, 3, Col{255, 236, 140}, al);
-    // little heart on the envelope so it reads as "friend invite"
-    cCircle(ex0-7, ey0+6, 6, Col{255, 90, 120}, al);
-    cCircle(ex0+7, ey0+6, 6, Col{255, 90, 120}, al);
-    float tip[6] = {ex0-12, ey0+8, ex0+12, ey0+8, ex0, ey0+18};
-    cPoly(tip, 3, Col{255, 90, 120}, al);
-  }
-
-  // ---- friend interaction badge: two little faces so it's obvious this needs two Charlies
-  if (haveFriend && (cur.active && (cur.id == AN_PEER_LOOK || cur.id == AN_PEER_WAVE || cur.id == AN_PEER_SYNC || cur.id == AN_FRIEND_YES))) {
-    float al = 0.85f;
-    // left mini Charlie
-    cCircle(-70, -150, 14, Col{80, 220, 255}, al);
-    cCircle(-74, -152, 4, Col{255,255,255}, al);
-    cCircle(-66, -152, 4, Col{255,255,255}, al);
-    // right mini Charlie
-    cCircle(70, -150, 14, Col{255, 140, 180}, al);
-    cCircle(66, -152, 4, Col{255,255,255}, al);
-    cCircle(74, -152, 4, Col{255,255,255}, al);
-    // connection
-    cStroke(-56, -150, 56, -150, 4, Col{255, 220, 100}, al);
-  }
+  // envelope removed - auto friends
 
   // ---- shared ball (rolls off one Charlie onto the other)
   if (ballOn) {
@@ -1679,6 +1669,7 @@ static void update(uint32_t now, float dt, const Input& in) {
 
   directorUpdate(now, dt);
   ballUpdate(dt);
+  playUpdate(now);
 
   // color blend toward chosen preset
   float kc = clampf(dt * 9.0f, 0, 1);

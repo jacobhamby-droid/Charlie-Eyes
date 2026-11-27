@@ -47,7 +47,7 @@ struct Step {
   Step& gap(float g) { v[C_GAP] = g; return *this; }
 };
 
-enum Fx { FX_NONE = 0, FX_HEARTS = 1, FX_STARS = 2 };
+enum Fx { FX_NONE = 0, FX_HEARTS = 1, FX_NONE = 2 };
 
 static const int MAX_STEPS = 16;
 struct Anim {
@@ -84,6 +84,7 @@ enum AnimId {
   AN_HAPPY1, AN_HAPPY2, AN_HAPPY3, AN_HAPPY4, AN_HAPPY5,
   AN_SAD1, AN_SAD2, AN_SAD3, AN_SAD4, AN_SAD5,
   AN_FRIEND_ASK, AN_FRIEND_YES, AN_PEER_LOOK, AN_PEER_WAVE, AN_PEER_SYNC,
+  AN_DIZZY2, AN_DIZZY3, AN_DIZZY4, AN_DIZZY5, AN_DIZZY6,
   AN_COUNT
 };
 
@@ -153,7 +154,7 @@ static void buildAnims() {
     .add(Step(300));
 
   {
-    Anim& a = def(AN_DIZZY, "dizzy", 150, 0.6f, 4, FX_STARS, true);
+    Anim& a = def(AN_DIZZY, "dizzy", 150, 0.6f, 4, FX_NONE, true);
     for (int i = 0; i < 8; i++) {
       float ang = i * 45.0f * DEG;
       a.add(Step(165).look(cosf(ang) * 20, sinf(ang) * 20)
@@ -577,11 +578,11 @@ static void mapSounds() {
   def(AN_MAD5, "mad5", 320, 0.55f, 3).add(Step(160).size(1.08f, 0.42f).tilt(30).roll(8)).add(Step(500).size(1.08f, 0.42f).tilt(30).roll(-8)).add(Step(300).tilt(10));
 
   // Shake / dizzy (5) - these will also trigger swirlies
-  def(AN_SHAKE1, "shake1", 160, 0.55f, 4, FX_STARS, true).add(Step(180).look(22, 0).hts(1.2f, 0.7f).roll(12)).add(Step(180).look(-22, 0).hts(0.7f, 1.2f).roll(-12));
-  def(AN_SHAKE2, "shake2", 140, 0.6f, 4, FX_STARS, true).add(Step(140).look(0, 20).size(0.9f, 1.3f)).add(Step(140).look(0, -20).size(1.1f, 0.7f));
-  def(AN_SHAKE3, "shake3", 180, 0.5f, 4, FX_STARS, true).add(Step(200).roll(15).size(1, 0.8f)).add(Step(200).roll(-15).size(1, 0.8f));
-  def(AN_SHAKE4, "shake4", 200, 0.5f, 4, FX_STARS, true).add(Step(160).look(18, 12).hts(1.3f, 0.65f)).add(Step(160).look(-18, -12).hts(0.65f, 1.3f));
-  def(AN_SHAKE5, "shake5", 150, 0.55f, 4, FX_STARS, true).add(Step(120).size(1.2f, 0.5f).tilt(10)).add(Step(120).size(0.7f, 1.3f).tilt(-10));
+  def(AN_SHAKE1, "shake1", 160, 0.55f, 4, FX_NONE, true).add(Step(180).look(22, 0).hts(1.2f, 0.7f).roll(12)).add(Step(180).look(-22, 0).hts(0.7f, 1.2f).roll(-12));
+  def(AN_SHAKE2, "shake2", 140, 0.6f, 4, FX_NONE, true).add(Step(140).look(0, 20).size(0.9f, 1.3f)).add(Step(140).look(0, -20).size(1.1f, 0.7f));
+  def(AN_SHAKE3, "shake3", 180, 0.5f, 4, FX_NONE, true).add(Step(200).roll(15).size(1, 0.8f)).add(Step(200).roll(-15).size(1, 0.8f));
+  def(AN_SHAKE4, "shake4", 200, 0.5f, 4, FX_NONE, true).add(Step(160).look(18, 12).hts(1.3f, 0.65f)).add(Step(160).look(-18, -12).hts(0.65f, 1.3f));
+  def(AN_SHAKE5, "shake5", 150, 0.55f, 4, FX_NONE, true).add(Step(120).size(1.2f, 0.5f).tilt(10)).add(Step(120).size(0.7f, 1.3f).tilt(-10));
 
   // Poke variants (5)
   def(AN_POKE1, "poke1", 400, 0.45f, 3).add(Step(80).size(0.75f, 1.4f).look(0, -10)).add(Step(150).size(1.1f, 0.85f)).add(Step(300));
@@ -617,5 +618,12 @@ static void mapSounds() {
   def(AN_PEER_LOOK, "peer_look", 200, 0.7f, 1).add(Step(300).look(30, -4).size(1.0f, 1.05f)).add(Step(700).look(30, -4)).add(Step(250));
   def(AN_PEER_WAVE, "peer_wave", 300, 0.55f, 2).add(Step(120).roll(12).bend(0.3f)).add(Step(120).roll(-12)).add(Step(120).roll(10)).add(Step(200));
   def(AN_PEER_SYNC, "peer_sync", 280, 0.55f, 2).add(Step(180).size(1.1f, 0.75f).bend(0.4f).look(0, 4)).add(Step(180).size(0.95f, 1.15f).look(0, -10)).add(Step(200).bend(0.25f));
+
+  // more dizzy variants (eyes spin then fall is handled in draw)
+  def(AN_DIZZY2, "dizzy2", 140, 0.6f, 4, FX_NONE, true).add(Step(120).look(32, 6).roll(20).size(1.15f, 0.65f)).add(Step(120).look(-32, -6).roll(-20).size(0.75f, 1.3f));
+  def(AN_DIZZY3, "dizzy3", 130, 0.65f, 4, FX_NONE, true).add(Step(100).look(0, 28).size(0.65f, 1.5f)).add(Step(100).look(0, -28).size(1.4f, 0.55f));
+  def(AN_DIZZY4, "dizzy4", 150, 0.55f, 4, FX_NONE, true).add(Step(140).roll(24).tilt(14).size(1.05f, 0.7f)).add(Step(140).roll(-24).tilt(-14).size(0.85f, 1.2f));
+  def(AN_DIZZY5, "dizzy5", 160, 0.5f, 4, FX_NONE, true).add(Step(110).look(26, 18).hts(1.4f, 0.55f)).add(Step(110).look(-26, -18).hts(0.55f, 1.4f));
+  def(AN_DIZZY6, "dizzy6", 120, 0.6f, 4, FX_NONE, true).add(Step(90).size(1.3f, 0.5f).roll(12)).add(Step(90).size(0.6f, 1.4f).roll(-12));
 
 }
