@@ -230,6 +230,7 @@ static bool shaking = false;
 static uint32_t lastShakeT = 0, lastHitT = 0, hitT[6];
 static int nHits = 0, freeCount = 0;
 static uint32_t lastFall = 0;
+static float shakePeak = 0;
 
 static void onShakeStart(uint32_t now);
 static void onShakeEnd(uint32_t now);
@@ -477,7 +478,6 @@ static void wakeUp(uint32_t now, bool startled) {
   if (startled) mind.annoy = clampf(mind.annoy + 0.12f, 0, 1);
 }
 
-static float shakePeak = 0;
 static void onShakeStart(uint32_t now) {
   if (ringing) return;
   lastInteract = now;

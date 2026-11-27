@@ -57,7 +57,8 @@ static uint8_t myId = 0;
 static uint32_t lastBroadcast = 0;
 static bool espNowOk = false;
 
-static void onPeerRecv(const uint8_t* mac, const uint8_t* data, int len) {
+static void onPeerRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  (void)info;
   if (len != sizeof(PeerMood)) return;
   PeerMood m;
   memcpy(&m, data, sizeof(m));
