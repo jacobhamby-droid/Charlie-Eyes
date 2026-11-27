@@ -132,7 +132,7 @@ static void play(Id id) {
 }
 
 static float volGain() {
-  static const float G[4] = {0.0f, 0.08f, 0.14f, 0.22f};  // quieter, pet-like
+  static const float G[4] = {0.0f, 0.05f, 0.09f, 0.14f};  // very soft, tiny-person
   return G[E.vol & 3];
 }
 static float bellGain() {  // alarms are always audible, even when muted
@@ -226,8 +226,8 @@ static float voiceSample() {
   if (n.vib) { E.vph += TAU_F * 11.0f / SR; f += n.vib * sinf(E.vph); }
   E.ph += TAU_F * f / SR;
   if (E.ph > TAU_F) E.ph -= TAU_F;
-  float s = sinf(E.ph + n.fm * 0.1f * sinf(2.0f * E.ph));
-  s += 0.16f * sinf(3.0f * E.ph);
+  float s = sinf(E.ph + n.fm * 0.04f * sinf(1.7f * E.ph));  // less FM = less robotic
+  s += 0.08f * sinf(2.3f * E.ph);  // softer harmonic
   if (n.flags & F_GROWL) {
     E.gph += TAU_F * 52.0f / SR;
     if (E.gph > TAU_F) E.gph -= TAU_F;

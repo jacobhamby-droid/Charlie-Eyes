@@ -57,12 +57,20 @@ static uint8_t myId = 0;
 static uint32_t lastBroadcast = 0;
 static bool espNowOk = false;
 
+static uint8_t seenMac[6] = {0};
+static bool seenAny = false;
 static void onPeerRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
-  (void)info;
   if (len != sizeof(PeerMood)) return;
   PeerMood m;
   memcpy(&m, data, sizeof(m));
   if (m.magic != 0xC3) return;
+  if (info && info->src_addr) {
+    if (!seenAny || memcmp(seenMac, info->src_addr, 6) != 0) {
+      memcpy(seenMac, info->src_addr, 6);
+      seenAny = true;
+      ch::onNewPeer(info->src_addr);
+    }
+  }
   ch::peerMood(m.joy / 100.0f, m.energy / 100.0f, m.annoy / 100.0f, m.love / 100.0f);
   Serial.printf("peer mood j:%d e:%d a:%d l:%d\n", m.joy, m.energy, m.annoy, m.love);
 }

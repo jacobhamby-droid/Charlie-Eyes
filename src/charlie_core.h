@@ -195,6 +195,18 @@ static bool playAnim(int id, uint32_t now, uint32_t loopUntil = 0) {
   return true;
 }
 
+
+// ---- reaction pools: at least 5 choices so nothing feels scripted ----
+static int pick(const int* a, int n) { return a[(int)(frand() * n) % n]; }
+static const int MAD_POOL[] = {AN_ANGRY, AN_MAD1, AN_MAD2, AN_MAD3, AN_MAD4, AN_MAD5};
+static const int SHAKE_POOL[] = {AN_DIZZY, AN_SHAKE1, AN_SHAKE2, AN_SHAKE3, AN_SHAKE4, AN_SHAKE5};
+static const int POKE_POOL[] = {AN_POKE_SURPRISE, AN_POKE1, AN_POKE2, AN_POKE3, AN_POKE4, AN_POKE5};
+static const int PET_POOL[] = {AN_PET_END, AN_PET1, AN_PET2, AN_PET3, AN_PET4, AN_PET5};
+static const int HAPPY_POOL[] = {AN_HAPPY_BOUNCE, AN_HAPPY1, AN_HAPPY2, AN_HAPPY3, AN_HAPPY4, AN_HAPPY5};
+static const int SAD_POOL[] = {AN_SAD_DROOP, AN_SAD1, AN_SAD2, AN_SAD3, AN_SAD4, AN_SAD5};
+static const int ANNOY_POOL[] = {AN_POKE_ANNOYED, AN_SHAKE_NO, AN_GRUMBLE, AN_MAD1, AN_POKE_OW};
+
+
 static void onAnimEnd(int id) {
   if (id == AN_SLEEP_NOD) { sleeping = true; fallingAsleep = false; sleepStart = gNow; }
   if (id == AN_DIZZY) dizzyFx = false;
@@ -486,11 +498,11 @@ static void onShakeStart(uint32_t now) {
   // intensity judged later in onShakeEnd; start with mild happy wiggle unless already hard
   if (shakePeak > 1.8f) {
     mind.dizzy = 1.0f;
-    playAnim(AN_DIZZY, now, now + 1200);
+    playAnim(pick(SHAKE_POOL, 6), now, now + 1200);
   } else {
     mind.joy = clampf(mind.joy + 0.15f, 0, 1);
     mind.love = clampf(mind.love + 0.08f, 0, 1);
-    playAnim(AN_WIGGLE, now);
+    playAnim(pick(HAPPY_POOL, 6), now);
   }
 }
 static void onShakeEnd(uint32_t now) {
@@ -501,7 +513,7 @@ static void onShakeEnd(uint32_t now) {
   if (shakePeak > 2.4f) {
     // very hard: dizzy then eyes "fall off"
     mind.dizzy = 1.0f;
-    playAnim(AN_DIZZY, now, now + 800);
+    playAnim(pick(SHAKE_POOL, 6), now, now + 800);
     // schedule fall-off by setting a high pending later; for now recover slowly
   } else if (shakePeak > 1.6f) {
     playAnim(AN_DIZZY_RECOVER, now);
@@ -522,6 +534,7 @@ static void onFall(uint32_t now) {
 }
 
 static void onPoke(uint32_t now, float ux, float uy) {
+  if (friendPrompt && tapOnFriendPrompt(ux, uy)) { becomeFriends(); return; }
   lastInteract = now;
   mind.energy = fminf(1.0f, mind.energy + 0.03f);
   mind.alert = fmaxf(mind.alert, 0.5f);
@@ -534,21 +547,21 @@ static void onPoke(uint32_t now, float ux, float uy) {
   if (pokeStreak >= 5) {
     mind.annoy = clampf(mind.annoy + 0.25f, 0, 1);
     mind.joy = clampf(mind.joy - 0.1f, 0, 1);
-    playAnim(AN_ANGRY, now);
+    playAnim(pick(MAD_POOL, 6), now);
   } else if (pokeStreak >= 3) {
     mind.annoy = clampf(mind.annoy + 0.15f, 0, 1);
     float r = frand();
-    playAnim(r < 0.4f ? AN_SHAKE_NO : (r < 0.7f ? AN_POKE_ANNOYED : AN_POKE_OW), now);
+    playAnim(pick(ANNOY_POOL, 5), now);
   } else if (mind.annoy > 0.45f) {
     mind.annoy = clampf(mind.annoy + 0.05f, 0, 1);
-    playAnim(frand() < 0.5f ? AN_POKE_ANNOYED : AN_POKE_OW, now);
+    playAnim(pick(ANNOY_POOL, 5), now);
   } else {
     mind.joy = clampf(mind.joy + 0.04f, 0, 1);
     float r = frand();
     if (pokeStreak == 2 && mind.joy > 0.5f) playAnim(r < 0.5f ? AN_POKE_GIGGLE : AN_POKE_TICKLE, now);
     else if (mind.joy > 0.7f && r < 0.4f) playAnim(AN_POKE_PLAYFUL, now);
     else if (r < 0.15f) playAnim(AN_POKE_OW, now);
-    else playAnim(AN_POKE_SURPRISE, now);
+    else playAnim(pick(POKE_POOL, 6), now);
   }
 }
 
@@ -557,7 +570,7 @@ static void onPetEnd(uint32_t now) {
   lastInteract = now;
   if (now - petStart > 900) {
     if (mind.love > 0.55f) playAnim(frand() < 0.5f ? AN_LOVE : AN_NUZZLE, now);
-    else playAnim(AN_PET_END, now);
+    else playAnim(pick(PET_POOL, 6), now);
   }
 }
 
@@ -891,7 +904,7 @@ static void directorUpdate(uint32_t now, float dt) {
     mind.annoy = fmaxf(0, mind.annoy - dt * 0.1f);
     mind.fear = fmaxf(0, mind.fear - dt * 0.3f);
     // no heart icons
-    if (now - lastPurrT > 700) { lastPurrT = now; say(mind.love > 0.6f && frand() < 0.3f ? snd::S_LOVE : snd::S_PURR); }
+    if (now - lastPurrT > 4500 && frand() < 0.4f) { lastPurrT = now; say(snd::S_BLIP); }  // rare soft chirp only
   }
   if (shaking && cur.active && cur.id == AN_DIZZY) cur.loopUntil = now + 500;
 
@@ -1448,6 +1461,17 @@ static void buildScene() {
       h2->sh.g0 = h2->sh.gx = h2->sh.gy = 0;
       commitItem(h2);
     }
+
+    // swirlies when dizzy so you can tell immediately
+    if (mind.dizzy > 0.35f || dizzyFx || shaking) {
+      float spin = (gNow % 1200) / 1200.0f * 2 * PI_F * (e == 0 ? 1 : -1);
+      float rr = fminf(a, b) * 0.55f;
+      for (int s = 0; s < 2; s++) {
+        float a0 = spin + s * PI_F;
+        float a1 = a0 + 1.4f;
+        cArc(rr * 0.25f, rr, a0, a1, Col{255, 255, 255}, 0.75f);
+      }
+    }
   }
 
   // ---- the alarm-clock hammer: pivots above his eyes and strikes them like bells
@@ -1461,6 +1485,16 @@ static void buildScene() {
     cCircle(hx, hy, 18, Col{228, 231, 240}, al, true);
     cCircle(hx - 6, hy - 7, 5, Col{255, 255, 255}, al * 0.6f);
     cCircle(px, py, 9, Col{105, 111, 130}, al, true);
+  }
+
+  // ---- friend prompt: ? icon when a new Charlie is nearby
+  if (friendPrompt && !haveFriend) {
+    float al = 0.9f;
+    cCircle(0, -140, 28, Col{255, 220, 80}, al, true);
+    cCircle(0, -140, 22, Col{30, 30, 40}, al);
+    // simple ? made of strokes
+    cArc(8, 14, -2.2f, 0.4f, Col{255, 230, 100}, al);
+    cCircle(0, -128, 3.5f, Col{255, 230, 100}, al);
   }
 
   // ---- particles
@@ -1489,14 +1523,51 @@ static void buildScene() {
 // ESP-NOW peer mood (rubs off on local mind)
 // ============================================================================
 static void peerMood(float joy, float energy, float annoy, float love) {
-  float k = 0.18f;
+  float k = haveFriend ? 0.28f : 0.12f;
   mind.joy = clampf(mind.joy + (joy - mind.joy) * k, 0, 1);
   mind.energy = clampf(mind.energy + (energy - mind.energy) * k, 0, 1);
   mind.annoy = clampf(mind.annoy + (annoy - mind.annoy) * k, 0, 1);
   mind.love = clampf(mind.love + (love - mind.love) * k, 0, 1);
   lastInteract = gNow;
-  if (joy > 0.75f && !cur.active && frand() < 0.3f) playAnim(AN_HAPPY_BOUNCE, gNow);
-  else if (annoy > 0.6f && !cur.active && frand() < 0.25f) playAnim(AN_GRUMBLE, gNow);
+  if (!haveFriend) return;
+  if (gNow - lastPeerInteract < 2500) return;
+  lastPeerInteract = gNow;
+  if (joy > 0.7f && !cur.active && frand() < 0.55f) playAnim(pick(HAPPY_POOL, 6), gNow);
+  else if (annoy > 0.55f && !cur.active && frand() < 0.4f) playAnim(pick(MAD_POOL, 6), gNow);
+  else if (!cur.active && frand() < 0.35f) {
+    int r = (int)(frand() * 3);
+    playAnim(r == 0 ? AN_PEER_LOOK : (r == 1 ? AN_PEER_WAVE : AN_PEER_SYNC), gNow);
+  }
+}
+
+
+// ---- friend prompt (new Charlie nearby) ----
+static bool friendPrompt = false;
+static uint8_t friendMac[6] = {0};
+static bool haveFriend = false;
+static uint32_t friendPromptT = 0;
+static uint32_t lastPeerInteract = 0;
+
+static void onNewPeer(const uint8_t* mac) {
+  if (haveFriend) return;
+  memcpy(friendMac, mac, 6);
+  friendPrompt = true;
+  friendPromptT = gNow;
+  playAnim(AN_FRIEND_ASK, gNow);
+  say(snd::S_CURIOUS);
+}
+static void becomeFriends() {
+  haveFriend = true;
+  friendPrompt = false;
+  mind.joy = clampf(mind.joy + 0.2f, 0, 1);
+  mind.love = clampf(mind.love + 0.15f, 0, 1);
+  playAnim(AN_FRIEND_YES, gNow);
+  say(snd::S_HAPPY);
+}
+static bool tapOnFriendPrompt(float ux, float uy) {
+  // ? sits at upper center
+  float dx = ux - 0, dy = uy - (-140);
+  return dx*dx + dy*dy < 50*50;
 }
 
 // ============================================================================

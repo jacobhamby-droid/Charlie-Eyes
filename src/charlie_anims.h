@@ -76,6 +76,14 @@ enum AnimId {
   AN_POKE_PLAYFUL, AN_LONELY, AN_FIDGET, AN_SLOW_BLINK, AN_DREAM, AN_SHY_HIDE, AN_PROUD, AN_SING,
   AN_GRUMBLE, AN_SCAN, AN_JUMP, AN_FOCUS, AN_TWITCH, AN_CHECK_TIME, AN_TIMER_SET, AN_TIMER_START,
   AN_CANCEL, AN_ALARM_SET, AN_RELIEF, AN_NUZZLE, AN_COZY,
+  // ---- lots of variants so nothing feels scripted ----
+  AN_MAD1, AN_MAD2, AN_MAD3, AN_MAD4, AN_MAD5,
+  AN_SHAKE1, AN_SHAKE2, AN_SHAKE3, AN_SHAKE4, AN_SHAKE5,
+  AN_POKE1, AN_POKE2, AN_POKE3, AN_POKE4, AN_POKE5,
+  AN_PET1, AN_PET2, AN_PET3, AN_PET4, AN_PET5,
+  AN_HAPPY1, AN_HAPPY2, AN_HAPPY3, AN_HAPPY4, AN_HAPPY5,
+  AN_SAD1, AN_SAD2, AN_SAD3, AN_SAD4, AN_SAD5,
+  AN_FRIEND_ASK, AN_FRIEND_YES, AN_PEER_LOOK, AN_PEER_WAVE, AN_PEER_SYNC,
   AN_COUNT
 };
 
@@ -560,4 +568,54 @@ static void mapSounds() {
     {AN_ALARM_SET, S_ALARMSET}, {AN_RELIEF, S_RELIEF}, {AN_NUZZLE, S_PURR}, {AN_COZY, S_PURR},
   };
   for (unsigned i = 0; i < sizeof(T) / sizeof(T[0]); i++) ANIMS[T[i].a].snd = T[i].s;
+  // ======================== lots of variants ======================================
+  // Mad (5)
+  def(AN_MAD1, "mad1", 340, 0.55f, 3).add(Step(180).size(1.1f, 0.48f).tilt(28).bend(-0.2f).look(0, 4)).add(Step(700).size(1.1f, 0.48f).tilt(28).bend(-0.2f)).add(Step(300).tilt(8));
+  def(AN_MAD2, "mad2", 380, 0.5f, 3).add(Step(120).size(1.05f, 0.4f).tilt(24).look(-20, 2)).add(Step(140).size(1.05f, 0.4f).tilt(24).look(20, 2)).add(Step(140).size(1.05f, 0.4f).tilt(24).look(-20, 2)).add(Step(400).tilt(12));
+  def(AN_MAD3, "mad3", 300, 0.6f, 3).add(Step(200).size(1.15f, 0.55f).tilt(20).bends(0.5f, -0.1f).look(0, 6)).add(Step(500).size(1.15f, 0.55f).tilt(20).bends(0.5f, -0.1f)).add(Step(300));
+  def(AN_MAD4, "mad4", 420, 0.45f, 3).add(Step(90).size(0.9f, 1.1f).tilt(16)).add(Step(80).size(1.2f, 0.45f).tilt(26).look(0, 3)).add(Step(600).size(1.1f, 0.5f).tilt(22)).add(Step(250));
+  def(AN_MAD5, "mad5", 320, 0.55f, 3).add(Step(160).size(1.08f, 0.42f).tilt(30).roll(8)).add(Step(500).size(1.08f, 0.42f).tilt(30).roll(-8)).add(Step(300).tilt(10));
+
+  // Shake / dizzy (5) - these will also trigger swirlies
+  def(AN_SHAKE1, "shake1", 160, 0.55f, 4, FX_STARS, true).add(Step(180).look(22, 0).hts(1.2f, 0.7f).roll(12)).add(Step(180).look(-22, 0).hts(0.7f, 1.2f).roll(-12));
+  def(AN_SHAKE2, "shake2", 140, 0.6f, 4, FX_STARS, true).add(Step(140).look(0, 20).size(0.9f, 1.3f)).add(Step(140).look(0, -20).size(1.1f, 0.7f));
+  def(AN_SHAKE3, "shake3", 180, 0.5f, 4, FX_STARS, true).add(Step(200).roll(15).size(1, 0.8f)).add(Step(200).roll(-15).size(1, 0.8f));
+  def(AN_SHAKE4, "shake4", 200, 0.5f, 4, FX_STARS, true).add(Step(160).look(18, 12).hts(1.3f, 0.65f)).add(Step(160).look(-18, -12).hts(0.65f, 1.3f));
+  def(AN_SHAKE5, "shake5", 150, 0.55f, 4, FX_STARS, true).add(Step(120).size(1.2f, 0.5f).tilt(10)).add(Step(120).size(0.7f, 1.3f).tilt(-10));
+
+  // Poke variants (5)
+  def(AN_POKE1, "poke1", 400, 0.45f, 3).add(Step(80).size(0.75f, 1.4f).look(0, -10)).add(Step(150).size(1.1f, 0.85f)).add(Step(300));
+  def(AN_POKE2, "poke2", 360, 0.5f, 3).add(Step(100).size(1.05f, 0.7f).bend(0.4f).look(0, 6)).add(Step(100).size(0.95f, 1.15f).look(0, -8)).add(Step(250).bend(0.2f));
+  def(AN_POKE3, "poke3", 380, 0.5f, 3).add(Step(90).look(-28, 0).size(1, 0.9f)).add(Step(90).look(28, 0)).add(Step(200));
+  def(AN_POKE4, "poke4", 340, 0.55f, 3).add(Step(70).size(0.8f, 1.3f).gap(6)).add(Step(200).size(1.05f, 0.95f)).add(Step(250));
+  def(AN_POKE5, "poke5", 420, 0.4f, 3).add(Step(60).size(1.15f, 0.6f).bend(0.3f)).add(Step(140).size(0.9f, 1.2f)).add(Step(200).bend(0.15f));
+
+  // Pet variants (5)
+  def(AN_PET1, "pet1", 240, 0.6f, 2).add(Step(250).size(1.12f, 0.75f).bend(0.55f)).add(Step(400).size(1.08f, 0.82f).bend(0.4f)).add(Step(250));
+  def(AN_PET2, "pet2", 220, 0.65f, 2).add(Step(200).size(1.05f, 0.7f).bend(0.6f).look(0, 8)).add(Step(350).bend(0.45f)).add(Step(200));
+  def(AN_PET3, "pet3", 260, 0.55f, 2).add(Step(180).size(1.1f, 0.68f).bend(0.5f).roll(6)).add(Step(180).bend(0.5f).roll(-6)).add(Step(300).bend(0.3f));
+  def(AN_PET4, "pet4", 200, 0.7f, 2).add(Step(300).size(1.15f, 0.72f).bend(0.65f).look(0, 4)).add(Step(400).bend(0.4f)).add(Step(200));
+  def(AN_PET5, "pet5", 240, 0.6f, 2).add(Step(160).size(1.08f, 0.8f).bend(0.4f)).add(Step(200).size(0.98f, 1.05f).bend(0.15f).look(0, -6)).add(Step(250).bend(0.35f));
+
+  // Happy (5)
+  def(AN_HAPPY1, "happy1", 360, 0.5f, 2).add(Step(120).size(1.1f, 0.7f).bend(0.45f).look(0, 6)).add(Step(120).size(0.9f, 1.25f).look(0, -14)).add(Step(200).bend(0.3f));
+  def(AN_HAPPY2, "happy2", 340, 0.5f, 2).add(Step(100).roll(10).bend(0.4f)).add(Step(100).roll(-10).bend(0.4f)).add(Step(100).roll(8)).add(Step(200).bend(0.25f));
+  def(AN_HAPPY3, "happy3", 380, 0.45f, 2).add(Step(90).size(1.15f, 0.65f).bend(0.5f)).add(Step(90).size(0.85f, 1.3f)).add(Step(90).size(1.1f, 0.7f).bend(0.4f)).add(Step(200));
+  def(AN_HAPPY4, "happy4", 300, 0.55f, 2).add(Step(150).look(-18, -4).size(1.05f, 0.85f).bend(0.3f)).add(Step(150).look(18, -4).bend(0.3f)).add(Step(250).bend(0.2f));
+  def(AN_HAPPY5, "happy5", 400, 0.45f, 2).add(Step(80).size(0.9f, 1.2f).gap(4)).add(Step(100).size(1.1f, 0.75f).bend(0.35f).look(0, 5)).add(Step(200).bend(0.2f));
+
+  // Sad (5)
+  def(AN_SAD1, "sad1", 150, 0.85f, 1).add(Step(500).size(0.95f, 0.7f).tilt(-18).look(0, 16)).add(Step(900).tilt(-18).look(0, 16)).add(Step(400));
+  def(AN_SAD2, "sad2", 160, 0.8f, 1).add(Step(400).size(0.9f, 0.75f).tilt(-14).look(-24, 10)).add(Step(700).tilt(-14).look(-24, 10)).add(Step(400).look(24, 10)).add(Step(300));
+  def(AN_SAD3, "sad3", 140, 0.85f, 1).add(Step(350).size(1.0f, 0.55f).tilt(-12).bend(-0.2f)).add(Step(800).tilt(-12)).add(Step(350));
+  def(AN_SAD4, "sad4", 170, 0.8f, 1).add(Step(300).look(0, 18).size(0.95f, 0.65f).tilt(-16)).add(Step(600).tilt(-16)).add(Step(300));
+  def(AN_SAD5, "sad5", 150, 0.85f, 1).add(Step(400).size(0.92f, 0.8f).tilt(-10).look(-16, 12)).add(Step(500).tilt(-14).look(16, 14)).add(Step(400));
+
+  // Friend / peer
+  def(AN_FRIEND_ASK, "friend_ask", 260, 0.6f, 3).add(Step(200).size(1.05f, 1.2f).look(0, -8).gap(4)).add(Step(600).size(1.0f, 1.1f).look(0, -4).roll(6)).add(Step(300));
+  def(AN_FRIEND_YES, "friend_yes", 340, 0.5f, 3).add(Step(150).size(1.12f, 0.7f).bend(0.5f)).add(Step(120).size(0.9f, 1.25f).look(0, -12)).add(Step(200).bend(0.35f)).add(Step(250));
+  def(AN_PEER_LOOK, "peer_look", 200, 0.7f, 1).add(Step(300).look(30, -4).size(1.0f, 1.05f)).add(Step(700).look(30, -4)).add(Step(250));
+  def(AN_PEER_WAVE, "peer_wave", 300, 0.55f, 2).add(Step(120).roll(12).bend(0.3f)).add(Step(120).roll(-12)).add(Step(120).roll(10)).add(Step(200));
+  def(AN_PEER_SYNC, "peer_sync", 280, 0.55f, 2).add(Step(180).size(1.1f, 0.75f).bend(0.4f).look(0, 4)).add(Step(180).size(0.95f, 1.15f).look(0, -10)).add(Step(200).bend(0.25f));
+
 }
