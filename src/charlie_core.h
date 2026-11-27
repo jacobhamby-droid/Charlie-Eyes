@@ -539,6 +539,12 @@ static uint8_t friendMac[6] = {0};
 static bool haveFriend = false;
 static uint32_t friendPromptT = 0;
 static uint32_t lastPeerInteract = 0;
+// ball that can roll off one Charlie onto the other
+static bool ballOn = false;
+static float ballX = -240, ballY = 40, ballVX = 0;
+static bool ballOutgoing = false;
+static uint32_t lastBallT = 0;
+static uint8_t pendingEvent = 0;  // 1 = ball coming from me
 
 static void onNewPeer(const uint8_t* mac) {
   if (haveFriend) return;
@@ -556,10 +562,29 @@ static void becomeFriends() {
   playAnim(AN_FRIEND_YES, gNow);
   say(snd::S_HAPPY);
 }
+static void startBallOut() {
+  if (!haveFriend || ballOn) return;
+  ballOn = true; ballOutgoing = true;
+  ballX = -200; ballY = 30; ballVX = 280;
+  lastBallT = gNow;
+  pendingEvent = 1;
+}
+static void startBallIn() {
+  ballOn = true; ballOutgoing = false;
+  ballX = 220; ballY = 30; ballVX = -260;
+  lastBallT = gNow;
+}
+static void ballUpdate(float dt) {
+  if (!ballOn) return;
+  ballX += ballVX * dt;
+  ballY = 30 + sinf(ballX * 0.04f) * 8;
+  if (ballOutgoing && ballX > 260) { ballOn = false; }
+  if (!ballOutgoing && ballX < -260) { ballOn = false; }
+}
 static bool tapOnFriendPrompt(float ux, float uy) {
-  // ? sits at upper center
-  float dx = ux - 0, dy = uy - (-140);
-  return dx*dx + dy*dy < 50*50;
+  // envelope sits in the front, near center
+  float dx = ux - 0, dy = uy - 20;
+  return dx*dx + dy*dy < 55*55;
 }
 
 
@@ -1454,6 +1479,17 @@ static void buildScene() {
     if (b < 11.0f * sM) b = 11.0f * sM;
     float ex = CXF + sign * (95.0f + sp[C_GAP].x) * sM + sp[C_LX].x * sM + ringJit[e] * sM;
     float ey = CYF + sp[C_LY].x * sM + (e == 0 ? sp[C_YL].x : sp[C_YR].x) * sM + eyeDY;
+    // dizzy: eyes spin in a circle then fall off the bottom (no disk)
+    if (mind.dizzy > 0.3f || dizzyFx) {
+      float spin = (gNow % 900) / 900.0f * 2 * PI_F;
+      float rad = 28.0f + mind.dizzy * 18.0f;
+      ex += cosf(spin + e * PI_F) * rad;
+      ey += sinf(spin + e * PI_F) * rad;
+      if (mind.dizzy > 0.7f) {
+        float fall = (mind.dizzy - 0.7f) * 420.0f;
+        ey += fall;
+      }
+    }
     float roll = sp[C_ROLL].x * DEG;
     float rx = ex - CXF, ry = ey - CYF;
     ex = CXF + rx * cosf(roll) - ry * sinf(roll);
@@ -1492,16 +1528,6 @@ static void buildScene() {
       commitItem(h2);
     }
 
-    // swirlies when dizzy so you can tell immediately
-    if (mind.dizzy > 0.35f || dizzyFx || shaking) {
-      float spin = (gNow % 1200) / 1200.0f * 2 * PI_F * (e == 0 ? 1 : -1);
-      float rr = fminf(a, b) * 0.55f;
-      for (int s = 0; s < 2; s++) {
-        float a0 = spin + s * PI_F;
-        float a1 = a0 + 1.4f;
-        cArc(rr * 0.25f, rr, a0, a1, Col{255, 255, 255}, 0.75f);
-      }
-    }
   }
 
   // ---- the alarm-clock hammer: pivots above his eyes and strikes them like bells
@@ -1517,14 +1543,43 @@ static void buildScene() {
     cCircle(px, py, 9, Col{105, 111, 130}, al, true);
   }
 
-  // ---- friend prompt: ? icon when a new Charlie is nearby
+  // ---- friend invite: envelope in the front (center, in front of the eyes)
   if (friendPrompt && !haveFriend) {
-    float al = 0.9f;
-    cCircle(0, -140, 28, Col{255, 220, 80}, al, true);
-    cCircle(0, -140, 22, Col{30, 30, 40}, al);
-    // simple ? made of strokes
-    cArc(8, 14, -2.2f, 0.4f, Col{255, 230, 100}, al);
-    cCircle(0, -128, 3.5f, Col{255, 230, 100}, al);
+    float al = 1.0f;
+    float bob = sinf(gNow / 180.0f) * 6.0f;
+    float ex0 = 0, ey0 = 20 + bob;
+    // envelope body
+    float body[8] = {ex0-38, ey0-22, ex0+38, ey0-22, ex0+38, ey0+28, ex0-38, ey0+28};
+    cPoly(body, 4, Col{255, 214, 90}, al);
+    // flap
+    float flap[6] = {ex0-38, ey0-22, ex0+38, ey0-22, ex0, ey0+4};
+    cPoly(flap, 3, Col{255, 236, 140}, al);
+    // little heart on the envelope so it reads as "friend invite"
+    cCircle(ex0-7, ey0+6, 6, Col{255, 90, 120}, al);
+    cCircle(ex0+7, ey0+6, 6, Col{255, 90, 120}, al);
+    float tip[6] = {ex0-12, ey0+8, ex0+12, ey0+8, ex0, ey0+18};
+    cPoly(tip, 3, Col{255, 90, 120}, al);
+  }
+
+  // ---- friend interaction badge: two little faces so it's obvious this needs two Charlies
+  if (haveFriend && (cur.active && (cur.id == AN_PEER_LOOK || cur.id == AN_PEER_WAVE || cur.id == AN_PEER_SYNC || cur.id == AN_FRIEND_YES))) {
+    float al = 0.85f;
+    // left mini Charlie
+    cCircle(-70, -150, 14, Col{80, 220, 255}, al);
+    cCircle(-74, -152, 4, Col{255,255,255}, al);
+    cCircle(-66, -152, 4, Col{255,255,255}, al);
+    // right mini Charlie
+    cCircle(70, -150, 14, Col{255, 140, 180}, al);
+    cCircle(66, -152, 4, Col{255,255,255}, al);
+    cCircle(74, -152, 4, Col{255,255,255}, al);
+    // connection
+    cStroke(-56, -150, 56, -150, 4, Col{255, 220, 100}, al);
+  }
+
+  // ---- shared ball (rolls off one Charlie onto the other)
+  if (ballOn) {
+    cCircle(ballX, ballY, 16, Col{80, 200, 255}, 1.0f, true);
+    cCircle(ballX - 5, ballY - 5, 5, Col{200, 240, 255}, 0.8f);
   }
 
   // ---- particles
@@ -1568,6 +1623,8 @@ static void peerMood(float joy, float energy, float annoy, float love) {
     int r = (int)(frand() * 3);
     playAnim(r == 0 ? AN_PEER_LOOK : (r == 1 ? AN_PEER_WAVE : AN_PEER_SYNC), gNow);
   }
+  // sometimes roll a ball over to the friend
+  if (haveFriend && !ballOn && gNow - lastBallT > 8000 && frand() < 0.15f) startBallOut();
 }
 
 
@@ -1621,6 +1678,7 @@ static void update(uint32_t now, float dt, const Input& in) {
   if (!menuOpen && menuP < 0.004f && fabsf(menuV) < 0.05f) { menuP = 0; menuV = 0; }
 
   directorUpdate(now, dt);
+  ballUpdate(dt);
 
   // color blend toward chosen preset
   float kc = clampf(dt * 9.0f, 0, 1);

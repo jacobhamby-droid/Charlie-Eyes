@@ -72,7 +72,8 @@ static void onPeerRecv(const esp_now_recv_info_t* info, const uint8_t* data, int
     }
   }
   ch::peerMood(m.joy / 100.0f, m.energy / 100.0f, m.annoy / 100.0f, m.love / 100.0f);
-  Serial.printf("peer mood j:%d e:%d a:%d l:%d\n", m.joy, m.energy, m.annoy, m.love);
+  if (m.event == 1) ch::startBallIn();
+  Serial.printf("peer mood j:%d e:%d a:%d l:%d ev:%d\n", m.joy, m.energy, m.annoy, m.love, m.event);
 }
 
 static void setupEspNow() {
@@ -96,6 +97,8 @@ static void broadcastMood() {
   m.energy = (uint8_t)(ch::mind.energy * 100);
   m.annoy = (uint8_t)(ch::mind.annoy * 100);
   m.love = (uint8_t)(ch::mind.love * 100);
+  m.event = ch::pendingEvent;
+  if (ch::pendingEvent) ch::pendingEvent = 0;
   uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
   esp_now_send(bcast, (uint8_t*)&m, sizeof(m));
 }
