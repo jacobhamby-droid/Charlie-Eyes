@@ -207,6 +207,20 @@ static const int HAPPY_POOL[] = {AN_HAPPY_BOUNCE, AN_HAPPY1, AN_HAPPY2, AN_HAPPY
 static const int SAD_POOL[] = {AN_SAD_DROOP, AN_SAD1, AN_SAD2, AN_SAD3, AN_SAD4, AN_SAD5};
 static const int ANNOY_POOL[] = {AN_POKE_ANNOYED, AN_SHAKE_NO, AN_GRUMBLE, AN_MAD1, AN_POKE_OW};
 
+// shared play state (declared early so shake can throw)
+static bool haveFriend = false;
+static int playState = 0;
+static uint32_t playT0 = 0;
+static bool iAmLeader = false;
+static bool ballOn = false;
+static float ballX = 0, ballY = 30, ballVX = 0;
+static bool ballMine = false;
+static uint32_t lastThrowT = 0;
+static uint8_t pendingEvent = 0;
+static uint32_t lastChirpT = 0;
+static void throwBall();
+
+
 
 static void onAnimEnd(int id) {
   if (id == AN_SLEEP_NOD) { sleeping = true; fallingAsleep = false; sleepStart = gNow; }
@@ -536,18 +550,7 @@ static void onFall(uint32_t now) {
 }
 
 // ---- friend prompt (new Charlie nearby) ----
-static bool haveFriend = false;
 static uint32_t lastPeerInteract = 0;
-// shared play
-static int playState = 0;          // 0=idle 1=surprise 2=talk 3=catch
-static uint32_t playT0 = 0;
-static bool iAmLeader = false;
-static bool ballOn = false;
-static float ballX = 0, ballY = 30, ballVX = 0;
-static bool ballMine = false;      // I currently have the ball
-static uint32_t lastThrowT = 0;
-static uint8_t pendingEvent = 0;   // 1=throw toward peer  2=start catch
-static uint32_t lastChirpT = 0;
 
 static void onNewPeer(const uint8_t* mac) {
   if (haveFriend) return;
@@ -557,7 +560,7 @@ static void onNewPeer(const uint8_t* mac) {
   uint8_t my[6]; esp_read_mac(my, ESP_MAC_WIFI_STA);
   iAmLeader = memcmp(my, mac, 6) < 0;
   playAnim(AN_POKE_SURPRISE, gNow);
-  say(snd::S_STARTLE);
+  say(snd::S_SURPRISE);
 }
 static void startCatch() {
   playState = 3; playT0 = gNow;
@@ -1613,8 +1616,6 @@ static void peerMood(float joy, float energy, float annoy, float love) {
     int r = (int)(frand() * 3);
     playAnim(r == 0 ? AN_PEER_LOOK : (r == 1 ? AN_PEER_WAVE : AN_PEER_SYNC), gNow);
   }
-  // sometimes roll a ball over to the friend
-  if (haveFriend && !ballOn && gNow - lastBallT > 8000 && frand() < 0.15f) startBallOut();
 }
 
 

@@ -47,7 +47,7 @@ struct Step {
   Step& gap(float g) { v[C_GAP] = g; return *this; }
 };
 
-enum Fx { FX_NONE = 0, FX_HEARTS = 1, FX_NONE = 2 };
+enum Fx { FX_NONE = 0, FX_HEARTS = 1, FX_STARS = 2 };
 
 static const int MAX_STEPS = 16;
 struct Anim {
