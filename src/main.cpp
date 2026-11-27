@@ -14,6 +14,8 @@
 */
 
 #include <Arduino.h>
+#include <esp_now.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <Preferences.h>
 #include "Arduino_GFX_Library.h"
@@ -44,6 +46,50 @@
 #define PA_PIN    46   // speaker amp enable
 
 static const uint8_t BRIGHTNESS = 190;  // AMOLED: lower = longer life for the pixels
+
+// ---- ESP-NOW peer mood ----
+struct PeerMood {
+  uint8_t magic = 0xC3;
+  uint8_t joy = 0, energy = 0, annoy = 0, love = 0;
+  uint8_t event = 0;
+};
+static uint8_t myId = 0;
+static uint32_t lastBroadcast = 0;
+static bool espNowOk = false;
+
+static void onPeerRecv(const uint8_t* mac, const uint8_t* data, int len) {
+  if (len != sizeof(PeerMood)) return;
+  PeerMood m;
+  memcpy(&m, data, sizeof(m));
+  if (m.magic != 0xC3) return;
+  ch::peerMood(m.joy / 100.0f, m.energy / 100.0f, m.annoy / 100.0f, m.love / 100.0f);
+  Serial.printf("peer mood j:%d e:%d a:%d l:%d\n", m.joy, m.energy, m.annoy, m.love);
+}
+
+static void setupEspNow() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  if (esp_now_init() != ESP_OK) { Serial.println("ESP-NOW init failed"); return; }
+  esp_now_register_recv_cb(onPeerRecv);
+  esp_now_peer_info_t peer = {};
+  memset(peer.peer_addr, 0xFF, 6);  // broadcast
+  peer.channel = 0;
+  peer.encrypt = false;
+  if (esp_now_add_peer(&peer) != ESP_OK) { Serial.println("ESP-NOW peer add failed"); return; }
+  espNowOk = true;
+  Serial.println("ESP-NOW ready (broadcast mood)");
+}
+
+static void broadcastMood() {
+  if (!espNowOk) return;
+  PeerMood m;
+  m.joy = (uint8_t)(ch::mind.joy * 100);
+  m.energy = (uint8_t)(ch::mind.energy * 100);
+  m.annoy = (uint8_t)(ch::mind.annoy * 100);
+  m.love = (uint8_t)(ch::mind.love * 100);
+  uint8_t bcast[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+  esp_now_send(bcast, (uint8_t*)&m, sizeof(m));
+}
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *panel = new Arduino_CO5300(bus, LCD_RST, 0, ch::SCR_W, ch::SCR_H, 6, 0, 0, 0);
@@ -286,6 +332,7 @@ void setup() {
   setupRtc();
   snd::setVolume(ch::settings.vol);
   setupAudio();
+  setupEspNow();
 
   ch::init(fb, esp_random());
   ch::start(millis());
@@ -309,6 +356,7 @@ void loop() {
   lastFrame = now;
 
   handleSerial();
+  if (now - lastBroadcast > 600) { lastBroadcast = now; broadcastMood(); }
 
   ch::Input in;
   readInputs(now, in);

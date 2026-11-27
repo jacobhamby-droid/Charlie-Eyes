@@ -31,54 +31,54 @@ enum { F_GROWL = 1, F_NOISE = 2 };
 #define NT(f0, f1, ms, amp, fm, vib, fl, gap) {f0, f1, ms, amp, fm, vib, fl, gap}
 
 // ---- phrases (all kept quiet and round: sine + a little FM, soft attack and release) ----------
-static const Note P_BOOT[] = {NT(400, 900, 110, 150, 10, 0, 0, 20), NT(1100, 1500, 90, 140, 8, 0, 0, 30),
-                              NT(900, 700, 70, 130, 6, 0, 0, 25), NT(1300, 1900, 130, 150, 12, 6, 0, 0)};
-static const Note P_HAPPY[] = {NT(700, 1100, 70, 150, 8, 0, 0, 15), NT(900, 1400, 70, 150, 8, 0, 0, 15),
-                               NT(1100, 1800, 120, 150, 10, 10, 0, 0)};
-static const Note P_GIGGLE[] = {NT(900, 1250, 45, 130, 6, 0, 0, 35), NT(1000, 1400, 45, 130, 6, 0, 0, 35),
-                                NT(1100, 1550, 45, 130, 6, 0, 0, 35), NT(1250, 1800, 70, 130, 6, 6, 0, 0)};
-static const Note P_CURIOUS[] = {NT(500, 900, 140, 140, 8, 0, 0, 40), NT(900, 1800, 190, 150, 10, 0, 0, 0)};
-static const Note P_SAD[] = {NT(700, 350, 380, 120, 4, 8, 0, 40), NT(450, 250, 460, 110, 3, 10, 0, 0)};
-static const Note P_ANGRY[] = {NT(190, 140, 170, 150, 0, 0, F_GROWL, 50), NT(230, 120, 260, 150, 0, 0, F_GROWL, 0)};
-static const Note P_SURPRISE[] = {NT(800, 1900, 90, 160, 10, 0, 0, 20), NT(1900, 1700, 120, 150, 6, 14, 0, 0)};
-static const Note P_SCARED[] = {NT(1300, 1700, 60, 130, 10, 25, 0, 20), NT(1400, 1800, 60, 130, 10, 25, 0, 20),
-                                NT(1300, 1700, 60, 130, 10, 25, 0, 20), NT(1500, 1300, 120, 120, 10, 30, 0, 0)};
-static const Note P_YES[] = {NT(700, 900, 80, 150, 4, 0, 0, 45), NT(1000, 1350, 120, 150, 4, 0, 0, 0)};
-static const Note P_NO[] = {NT(450, 300, 150, 140, 6, 0, 0, 45), NT(380, 230, 210, 140, 6, 0, 0, 0)};
-static const Note P_DIZZY[] = {NT(500, 1000, 260, 130, 12, 40, 0, 0), NT(1000, 500, 260, 130, 12, 40, 0, 0),
-                               NT(500, 900, 220, 120, 12, 40, 0, 0)};
-static const Note P_YAWN[] = {NT(420, 260, 700, 100, 3, 6, F_NOISE, 0)};
-static const Note P_SIGH[] = {NT(520, 300, 450, 90, 2, 0, F_NOISE, 0)};
-static const Note P_PURR[] = {NT(190, 210, 650, 85, 0, 0, F_GROWL, 0)};
-static const Note P_LOVE[] = {NT(800, 1200, 200, 130, 4, 12, 0, 20), NT(1200, 1000, 280, 130, 4, 14, 0, 0)};
-static const Note P_SNORE[] = {NT(150, 110, 520, 60, 0, 0, F_GROWL | F_NOISE, 0)};
-static const Note P_WAKE[] = {NT(500, 700, 100, 120, 3, 0, 0, 30), NT(800, 1200, 150, 140, 6, 0, 0, 0)};
-static const Note P_THINK[] = {NT(600, 700, 60, 110, 8, 20, 0, 30), NT(900, 700, 60, 110, 8, 20, 0, 30),
-                               NT(700, 1000, 90, 110, 8, 20, 0, 0)};
-static const Note P_SNEEZE[] = {NT(500, 1500, 70, 150, 10, 0, 0, 80), NT(1500, 300, 170, 160, 10, 0, F_NOISE, 0)};
-static const Note P_BLIP[] = {NT(1500, 1800, 55, 130, 6, 0, 0, 0)};
-static const Note P_PERK[] = {NT(900, 1200, 60, 150, 6, 0, 0, 25), NT(1300, 2100, 160, 160, 10, 0, 0, 0)};
-static const Note P_LISTEN[] = {NT(1100, 1350, 75, 100, 5, 0, 0, 0)};
-static const Note P_GRUMBLE[] = {NT(240, 180, 300, 110, 2, 0, F_GROWL, 50), NT(200, 160, 280, 100, 2, 0, F_GROWL, 0)};
-static const Note P_EXCITED[] = {NT(600, 800, 55, 150, 6, 0, 0, 10), NT(800, 1000, 55, 150, 6, 0, 0, 10),
-                                 NT(1000, 1300, 55, 150, 6, 0, 0, 10), NT(1300, 1700, 55, 150, 6, 0, 0, 10),
-                                 NT(1700, 2200, 130, 160, 8, 8, 0, 0)};
-static const Note P_TAP[] = {NT(1400, 1650, 35, 110, 3, 0, 0, 0)};
-static const Note P_UP[] = {NT(1100, 1500, 55, 120, 4, 0, 0, 0)};
-static const Note P_DOWN[] = {NT(1500, 1100, 55, 120, 4, 0, 0, 0)};
-static const Note P_CONFIRM[] = {NT(900, 1200, 70, 140, 4, 0, 0, 20), NT(1300, 1800, 110, 150, 4, 0, 0, 0)};
-static const Note P_CANCEL[] = {NT(900, 500, 150, 130, 4, 0, 0, 0)};
-static const Note P_ALARMSET[] = {NT(1000, 1000, 70, 130, 3, 0, 0, 25), NT(1400, 1400, 70, 130, 3, 0, 0, 25),
-                                  NT(1800, 1800, 130, 140, 3, 8, 0, 0)};
-static const Note P_OUCH[] = {NT(1600, 900, 90, 150, 8, 12, 0, 30), NT(700, 500, 130, 120, 4, 10, 0, 0)};
-static const Note P_TICKLE[] = {NT(1000, 1400, 40, 130, 6, 0, 0, 25), NT(1100, 1500, 40, 130, 6, 0, 0, 25),
-                                NT(1000, 1400, 40, 130, 6, 0, 0, 25), NT(1200, 1650, 40, 130, 6, 0, 0, 25),
-                                NT(1100, 1500, 40, 130, 6, 0, 0, 25), NT(1300, 1900, 90, 130, 6, 10, 0, 0)};
-static const Note P_PROUD[] = {NT(700, 900, 90, 140, 4, 0, 0, 25), NT(900, 1300, 90, 140, 4, 0, 0, 25),
-                               NT(1300, 1300, 220, 140, 4, 8, 0, 0)};
-static const Note P_SHY[] = {NT(1300, 1000, 130, 100, 3, 8, 0, 30), NT(1000, 800, 150, 90, 3, 8, 0, 0)};
-static const Note P_SCAN[] = {NT(500, 1200, 420, 90, 6, 0, 0, 40), NT(1200, 500, 420, 90, 6, 0, 0, 0)};
-static const Note P_RELIEF[] = {NT(800, 500, 320, 100, 3, 0, F_NOISE, 60), NT(600, 900, 160, 120, 4, 0, 0, 0)};
+static const Note P_BOOT[] = {NT(220, 495, 110, 150, 10, 0, 0, 20), NT(605, 825, 90, 140, 8, 0, 0, 30),
+                              NT(495, 385, 70, 130, 6, 0, 0, 25), NT(715, 1045, 130, 150, 12, 6, 0, 0)};
+static const Note P_HAPPY[] = {NT(385, 605, 70, 150, 8, 0, 0, 15), NT(495, 770, 70, 150, 8, 0, 0, 15),
+                               NT(605, 990, 120, 150, 10, 10, 0, 0)};
+static const Note P_GIGGLE[] = {NT(495, 687, 45, 130, 6, 0, 0, 35), NT(550, 770, 45, 130, 6, 0, 0, 35),
+                                NT(605, 852, 45, 130, 6, 0, 0, 35), NT(687, 990, 70, 130, 6, 6, 0, 0)};
+static const Note P_CURIOUS[] = {NT(275, 495, 140, 140, 8, 0, 0, 40), NT(495, 990, 190, 150, 10, 0, 0, 0)};
+static const Note P_SAD[] = {NT(385, 192, 380, 120, 4, 8, 0, 40), NT(247, 137, 460, 110, 3, 10, 0, 0)};
+static const Note P_ANGRY[] = {NT(104, 90, 170, 150, 0, 0, F_GROWL, 50), NT(126, 90, 260, 150, 0, 0, F_GROWL, 0)};
+static const Note P_SURPRISE[] = {NT(440, 1045, 90, 160, 10, 0, 0, 20), NT(1045, 935, 120, 150, 6, 14, 0, 0)};
+static const Note P_SCARED[] = {NT(715, 935, 60, 130, 10, 25, 0, 20), NT(770, 990, 60, 130, 10, 25, 0, 20),
+                                NT(715, 935, 60, 130, 10, 25, 0, 20), NT(825, 715, 120, 120, 10, 30, 0, 0)};
+static const Note P_YES[] = {NT(385, 495, 80, 150, 4, 0, 0, 45), NT(550, 742, 120, 150, 4, 0, 0, 0)};
+static const Note P_NO[] = {NT(247, 165, 150, 140, 6, 0, 0, 45), NT(209, 126, 210, 140, 6, 0, 0, 0)};
+static const Note P_DIZZY[] = {NT(275, 550, 260, 130, 12, 40, 0, 0), NT(550, 275, 260, 130, 12, 40, 0, 0),
+                               NT(275, 495, 220, 120, 12, 40, 0, 0)};
+static const Note P_YAWN[] = {NT(231, 143, 700, 100, 3, 6, F_NOISE, 0)};
+static const Note P_SIGH[] = {NT(286, 165, 450, 90, 2, 0, F_NOISE, 0)};
+static const Note P_PURR[] = {NT(104, 115, 650, 85, 0, 0, F_GROWL, 0)};
+static const Note P_LOVE[] = {NT(440, 660, 200, 130, 4, 12, 0, 20), NT(660, 550, 280, 130, 4, 14, 0, 0)};
+static const Note P_SNORE[] = {NT(90, 90, 520, 60, 0, 0, F_GROWL | F_NOISE, 0)};
+static const Note P_WAKE[] = {NT(275, 385, 100, 120, 3, 0, 0, 30), NT(440, 660, 150, 140, 6, 0, 0, 0)};
+static const Note P_THINK[] = {NT(330, 385, 60, 110, 8, 20, 0, 30), NT(495, 385, 60, 110, 8, 20, 0, 30),
+                               NT(385, 550, 90, 110, 8, 20, 0, 0)};
+static const Note P_SNEEZE[] = {NT(275, 825, 70, 150, 10, 0, 0, 80), NT(825, 165, 170, 160, 10, 0, F_NOISE, 0)};
+static const Note P_BLIP[] = {NT(825, 990, 55, 130, 6, 0, 0, 0)};
+static const Note P_PERK[] = {NT(495, 660, 60, 150, 6, 0, 0, 25), NT(715, 1155, 160, 160, 10, 0, 0, 0)};
+static const Note P_LISTEN[] = {NT(605, 742, 75, 100, 5, 0, 0, 0)};
+static const Note P_GRUMBLE[] = {NT(132, 99, 300, 110, 2, 0, F_GROWL, 50), NT(110, 90, 280, 100, 2, 0, F_GROWL, 0)};
+static const Note P_EXCITED[] = {NT(330, 440, 55, 150, 6, 0, 0, 10), NT(440, 550, 55, 150, 6, 0, 0, 10),
+                                 NT(550, 715, 55, 150, 6, 0, 0, 10), NT(715, 935, 55, 150, 6, 0, 0, 10),
+                                 NT(935, 1210, 130, 160, 8, 8, 0, 0)};
+static const Note P_TAP[] = {NT(770, 907, 35, 110, 3, 0, 0, 0)};
+static const Note P_UP[] = {NT(605, 825, 55, 120, 4, 0, 0, 0)};
+static const Note P_DOWN[] = {NT(825, 605, 55, 120, 4, 0, 0, 0)};
+static const Note P_CONFIRM[] = {NT(495, 660, 70, 140, 4, 0, 0, 20), NT(715, 990, 110, 150, 4, 0, 0, 0)};
+static const Note P_CANCEL[] = {NT(495, 275, 150, 130, 4, 0, 0, 0)};
+static const Note P_ALARMSET[] = {NT(550, 550, 70, 130, 3, 0, 0, 25), NT(770, 770, 70, 130, 3, 0, 0, 25),
+                                  NT(990, 990, 130, 140, 3, 8, 0, 0)};
+static const Note P_OUCH[] = {NT(880, 495, 90, 150, 8, 12, 0, 30), NT(385, 275, 130, 120, 4, 10, 0, 0)};
+static const Note P_TICKLE[] = {NT(550, 770, 40, 130, 6, 0, 0, 25), NT(605, 825, 40, 130, 6, 0, 0, 25),
+                                NT(550, 770, 40, 130, 6, 0, 0, 25), NT(660, 907, 40, 130, 6, 0, 0, 25),
+                                NT(605, 825, 40, 130, 6, 0, 0, 25), NT(715, 1045, 90, 130, 6, 10, 0, 0)};
+static const Note P_PROUD[] = {NT(385, 495, 90, 140, 4, 0, 0, 25), NT(495, 715, 90, 140, 4, 0, 0, 25),
+                               NT(715, 715, 220, 140, 4, 8, 0, 0)};
+static const Note P_SHY[] = {NT(715, 550, 130, 100, 3, 8, 0, 30), NT(550, 440, 150, 90, 3, 8, 0, 0)};
+static const Note P_SCAN[] = {NT(275, 660, 420, 90, 6, 0, 0, 40), NT(660, 275, 420, 90, 6, 0, 0, 0)};
+static const Note P_RELIEF[] = {NT(440, 275, 320, 100, 3, 0, F_NOISE, 60), NT(330, 495, 160, 120, 4, 0, 0, 0)};
 
 struct Phrase { const Note* n; uint8_t cnt; uint8_t pri; };
 #define PHR(a, pri) {a, (uint8_t)(sizeof(a) / sizeof(Note)), pri}
@@ -132,11 +132,11 @@ static void play(Id id) {
 }
 
 static float volGain() {
-  static const float G[4] = {0.0f, 0.22f, 0.42f, 0.70f};
+  static const float G[4] = {0.0f, 0.08f, 0.14f, 0.22f};  // quieter, pet-like
   return G[E.vol & 3];
 }
 static float bellGain() {  // alarms are always audible, even when muted
-  static const float G[4] = {0.50f, 0.50f, 0.58f, 0.80f};
+  static const float G[4] = {0.18f, 0.18f, 0.22f, 0.30f};  // quieter bells
   return G[E.vol & 3];
 }
 

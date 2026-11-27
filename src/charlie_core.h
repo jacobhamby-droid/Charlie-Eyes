@@ -190,8 +190,8 @@ static bool playAnim(int id, uint32_t now, uint32_t loopUntil = 0) {
   cur.active = true; cur.id = id; cur.idx = 0;
   cur.stepEnd = now + A.s[0].ms; cur.loopUntil = loopUntil;
   if (A.snd) say(A.snd);
-  if (A.fx == FX_HEARTS) for (int i = 0; i < 4; i++) spawnHeart();
-  if (A.fx == FX_STARS) { dizzyFx = true; spawnStars(); }
+  // icons disabled: eyes only
+  if (A.fx == FX_STARS) dizzyFx = true;
   return true;
 }
 
@@ -244,6 +244,9 @@ static void imuUpdate(uint32_t now, float dt, float ax, float ay, float az) {
   float m = sqrtf(ax * ax + ay * ay + az * az);
   float dev = fabsf(m - 1.0f);
 
+  // track peak for soft vs hard shake
+  if (dev > shakePeak) shakePeak = dev;
+  else shakePeak *= 0.995f;
   // shake detection: several strong spikes in a short window
   if (dev > 0.7f && now - lastHitT > 90) {
     lastHitT = now;
@@ -474,22 +477,39 @@ static void wakeUp(uint32_t now, bool startled) {
   if (startled) mind.annoy = clampf(mind.annoy + 0.12f, 0, 1);
 }
 
+static float shakePeak = 0;
 static void onShakeStart(uint32_t now) {
   if (ringing) return;
   lastInteract = now;
   if (sleeping) { sleeping = false; fallingAsleep = false; mind.energy = fmaxf(mind.energy, 0.5f); }
   cur.active = false;
-  mind.dizzy = 1.0f;
-  playAnim(AN_DIZZY, now, now + 900);
+  // intensity judged later in onShakeEnd; start with mild happy wiggle unless already hard
+  if (shakePeak > 1.8f) {
+    mind.dizzy = 1.0f;
+    playAnim(AN_DIZZY, now, now + 1200);
+  } else {
+    mind.joy = clampf(mind.joy + 0.15f, 0, 1);
+    mind.love = clampf(mind.love + 0.08f, 0, 1);
+    playAnim(AN_WIGGLE, now);
+  }
 }
 static void onShakeEnd(uint32_t now) {
   if (ringing) return;
   lastInteract = now;
-  mind.annoy = clampf(mind.annoy + 0.2f, 0, 1);
-  mind.joy = clampf(mind.joy - 0.12f, 0, 1);
   cur.active = false;
   dizzyFx = false;
-  playAnim(AN_DIZZY_RECOVER, now);
+  if (shakePeak > 2.4f) {
+    // very hard: dizzy then eyes "fall off"
+    mind.dizzy = 1.0f;
+    playAnim(AN_DIZZY, now, now + 800);
+    // schedule fall-off by setting a high pending later; for now recover slowly
+  } else if (shakePeak > 1.6f) {
+    playAnim(AN_DIZZY_RECOVER, now);
+  } else {
+    // soft shake already made him happy
+    mind.joy = clampf(mind.joy + 0.1f, 0, 1);
+  }
+  shakePeak *= 0.5f;
 }
 static void onFall(uint32_t now) {
   if (ringing) return;
@@ -682,9 +702,8 @@ static void touchUpdate(uint32_t now, bool down, float rx, float ry) {
       float dy = uy - T.sy, dx = ux - T.sx;
       bool horiz = fabsf(dy) < fabsf(dx) * 0.9f, vert = fabsf(dx) < fabsf(dy) * 0.9f;
       if (page == PG_FACE) {
-        if (T.sy < -105 && dy > 70 && vert) { setPage(PG_COLOR, now); T.consumed = true; }
-        else if (T.sx < -105 && dx > 70 && horiz) { setPage(PG_TIMER, now); say(snd::S_UP); T.consumed = true; }
-        else if (T.sx > 105 && dx < -70 && horiz) { setPage(PG_ALARM, now); say(snd::S_UP); T.consumed = true; }
+        // menus removed: swipes no longer open pages
+        (void)vert; (void)horiz; (void)dy; (void)dx;
       } else if (page == PG_COLOR) {
         if (-dy > 70 && vert) { closeMenu(); T.consumed = true; }
       } else if (page == PG_TIMER) {
@@ -871,7 +890,7 @@ static void directorUpdate(uint32_t now, float dt) {
     mind.love = clampf(mind.love + dt * 0.22f, 0, 1);
     mind.annoy = fmaxf(0, mind.annoy - dt * 0.1f);
     mind.fear = fmaxf(0, mind.fear - dt * 0.3f);
-    if (now - lastHeartT > 650) { lastHeartT = now; spawnHeart(); }
+    // no heart icons
     if (now - lastPurrT > 700) { lastPurrT = now; say(mind.love > 0.6f && frand() < 0.3f ? snd::S_LOVE : snd::S_PURR); }
   }
   if (shaking && cur.active && cur.id == AN_DIZZY) cur.loopUntil = now + 500;
@@ -1464,6 +1483,20 @@ static void buildScene() {
 
   // ---- menu pages
   if (mp > 0.02f) drawPageUI(shownPage, mp, ec);
+}
+
+// ============================================================================
+// ESP-NOW peer mood (rubs off on local mind)
+// ============================================================================
+static void peerMood(float joy, float energy, float annoy, float love) {
+  float k = 0.18f;
+  mind.joy = clampf(mind.joy + (joy - mind.joy) * k, 0, 1);
+  mind.energy = clampf(mind.energy + (energy - mind.energy) * k, 0, 1);
+  mind.annoy = clampf(mind.annoy + (annoy - mind.annoy) * k, 0, 1);
+  mind.love = clampf(mind.love + (love - mind.love) * k, 0, 1);
+  lastInteract = gNow;
+  if (joy > 0.75f && !cur.active && frand() < 0.3f) playAnim(AN_HAPPY_BOUNCE, gNow);
+  else if (annoy > 0.6f && !cur.active && frand() < 0.25f) playAnim(AN_GRUMBLE, gNow);
 }
 
 // ============================================================================
