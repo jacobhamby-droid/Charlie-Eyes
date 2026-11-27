@@ -12,7 +12,7 @@
 namespace snd {
 
 static const int SR = 16000;  // sample rate
-static const float TWO_PI = 6.2831853f;
+static const float TAU_F = 6.2831853f;
 
 enum Id : uint8_t {
   S_NONE = 0, S_BOOT, S_HAPPY, S_GIGGLE, S_CURIOUS, S_SAD, S_ANGRY, S_SURPRISE, S_SCARED, S_YES, S_NO,
@@ -196,8 +196,8 @@ static float bellSample() {
     if (!b.on) continue;
     float s = 0;
     for (int k = 0; k < 4; k++) {
-      b.ph[k] += TWO_PI * b.f * R[k] / SR;
-      if (b.ph[k] > TWO_PI) b.ph[k] -= TWO_PI;
+      b.ph[k] += TAU_F * b.f * R[k] / SR;
+      if (b.ph[k] > TAU_F) b.ph[k] -= TAU_F;
       b.env[k] *= expf(-1.0f / (TAU[k] * SR));
       s += b.env[k] * sinf(b.ph[k]);
     }
@@ -223,15 +223,15 @@ static float voiceSample() {
   const Note& n = E.seq[E.idx];
   float u = 1.0f - (float)E.noteLeft / (float)E.noteTotal;
   float f = n.f0 + (n.f1 - n.f0) * u;
-  if (n.vib) { E.vph += TWO_PI * 11.0f / SR; f += n.vib * sinf(E.vph); }
-  E.ph += TWO_PI * f / SR;
-  if (E.ph > TWO_PI) E.ph -= TWO_PI;
+  if (n.vib) { E.vph += TAU_F * 11.0f / SR; f += n.vib * sinf(E.vph); }
+  E.ph += TAU_F * f / SR;
+  if (E.ph > TAU_F) E.ph -= TAU_F;
   float s = sinf(E.ph + n.fm * 0.1f * sinf(2.0f * E.ph));
   s += 0.16f * sinf(3.0f * E.ph);
   if (n.flags & F_GROWL) {
-    E.gph += TWO_PI * 52.0f / SR;
-    if (E.gph > TWO_PI) E.gph -= TWO_PI;
-    float saw = E.ph / TWO_PI * 2.0f - 1.0f;
+    E.gph += TAU_F * 52.0f / SR;
+    if (E.gph > TAU_F) E.gph -= TAU_F;
+    float saw = E.ph / TAU_F * 2.0f - 1.0f;
     s = 1.7f * (0.45f * s + 0.35f * saw) * (0.65f + 0.35f * sinf(E.gph));
   }
   if (n.flags & F_NOISE) s = 0.6f * s + 0.35f * nrand();

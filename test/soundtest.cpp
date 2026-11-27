@@ -47,7 +47,7 @@ static void vowel(std::vector<float>& s, float ms, float f0a, float f0b, float a
   int n = (int)(ms * SR / 1000); static float ph = 0;
   for (int i = 0; i < n; i++) {
     float u = (float)i / n, f0 = f0a + (f0b - f0a) * u;
-    ph += TWO_PI * f0 / SR; if (ph > TWO_PI) ph -= TWO_PI;
+    ph += snd::TAU_F * f0 / SR; if (ph > snd::TAU_F) ph -= snd::TAU_F;
     float v = 0; for (int h = 1; h <= 8; h++) v += sinf(h * ph) / h;
     float env = fminf(1, u / rise) * fminf(1, (1 - u) / fall);
     s.push_back(v * amp * env);

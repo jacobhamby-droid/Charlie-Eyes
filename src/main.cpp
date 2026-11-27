@@ -128,6 +128,8 @@ static void setupImu() {
   Serial.println("imu: ok");
 }
 
+static void pollRtc(uint32_t now, ch::Input &in);
+
 static void readInputs(uint32_t now, ch::Input &in) {
   // ---- touch: poll when the controller signalled, and keep polling while a finger is down
   if (haveTouch && (touchIrq || touchDown)) {
